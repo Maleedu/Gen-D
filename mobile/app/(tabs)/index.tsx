@@ -34,6 +34,7 @@ export default function HomeScreen() {
       </Pressable>
 
       <Pressable
+        onPress={() => router.push('/wall')}
         style={({ pressed }) => [
           styles.secondaryRow,
           { backgroundColor: c.row },

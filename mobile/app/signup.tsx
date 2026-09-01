@@ -64,7 +64,7 @@ export default function SignupScreen() {
       Alert.alert('Signup failed', error.message);
       return;
     }
-    Alert.alert('Welcome to Gen-D, 'Your account has been created.');
+    Alert.alert('Welcome to Gen-D', 'Your account has been created.');
     router.replace('/login');
   }
 
