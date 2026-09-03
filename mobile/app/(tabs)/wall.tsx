@@ -7,6 +7,11 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Image } from 'expo-image';
 import * as Location from 'expo-location';
 import { router } from 'expo-router';
+import {
+  useFonts,
+  SpaceGrotesk_700Bold,
+  SpaceGrotesk_600SemiBold,
+} from '@expo-google-fonts/space-grotesk';
 import { supabase } from '../../lib/supabase';
 
 const BLUE = '#1877F2';
@@ -14,8 +19,14 @@ const RED = '#E41E3F';
 const AMBER = '#B7791F';
 const NEUTRAL = '#6b7280';
 
+// Applied once these load; renders with the system font until then (no
+// splash-screen gating — this is a cosmetic upgrade, not a blocking one).
+const HEADING_FONT_BOLD = 'SpaceGrotesk_700Bold';
+const HEADING_FONT_SEMIBOLD = 'SpaceGrotesk_600SemiBold';
+
 type DeliverySpeed = 'super_fast' | 'express' | 'standard';
 type PricingMode = 'fixed' | 'auction';
+type ParcelSize = 'small' | 'medium' | 'large';
 
 type Order = {
   id: string;
@@ -30,6 +41,8 @@ type Order = {
   pricing_mode: PricingMode;
   price_paise: number | null;
   min_bid_paise: number | null;
+  weight_kg: number;
+  parcel_size: ParcelSize;
   created_at: string;
 };
 
@@ -52,7 +65,14 @@ const SPEED_META: Record<DeliverySpeed, { label: string; color: string }> = {
 
 const ORDER_COLUMNS =
   'id, item_description, item_category, photo_urls, point_a_address, point_b_address, ' +
-  'point_a_lat, point_a_lng, delivery_speed, pricing_mode, price_paise, min_bid_paise, created_at';
+  'point_a_lat, point_a_lng, delivery_speed, pricing_mode, price_paise, min_bid_paise, ' +
+  'weight_kg, parcel_size, created_at';
+
+const PARCEL_SIZE_LABEL: Record<ParcelSize, string> = { small: 'Small', medium: 'Medium', large: 'Large' };
+
+function formatWeight(kg: number) {
+  return `${kg % 1 === 0 ? kg.toFixed(0) : kg.toFixed(1)} kg`;
+}
 
 function haversineKm(lat1: number, lng1: number, lat2: number, lng2: number) {
   const R = 6371;
@@ -93,14 +113,15 @@ function formatDistance(km: number | null) {
 
 export default function WallScreen() {
   const isDark = useColorScheme() === 'dark';
+  const [fontsLoaded] = useFonts({ SpaceGrotesk_700Bold, SpaceGrotesk_600SemiBold });
   const c: Palette = {
     bg: isDark ? '#000000' : '#ffffff',
     text: isDark ? '#ffffff' : '#0f1720',
     muted: isDark ? '#8e8e93' : '#6b7280',
-    inputBg: isDark ? '#111214' : '#f5f6f8',
-    card: isDark ? '#111214' : '#ffffff',
-    border: isDark ? '#26272b' : '#e5e7eb',
-    skeleton: isDark ? '#1c1d20' : '#e9ebee',
+    inputBg: isDark ? '#1a1a1a' : '#f5f6f8',
+    card: isDark ? '#161616' : '#ffffff',
+    border: isDark ? '#2e2e32' : '#e5e7eb',
+    skeleton: isDark ? '#232326' : '#e9ebee',
   };
 
   const [agentId, setAgentId] = useState<string | null>(null);
@@ -256,7 +277,9 @@ export default function WallScreen() {
   return (
     <SafeAreaView style={[styles.container, { backgroundColor: c.bg }]} edges={['top', 'left', 'right']}>
       <View style={styles.header}>
-        <Text style={[styles.headerTitle, { color: c.text }]}>The Wall</Text>
+        <Text style={[styles.headerTitle, { color: c.text }, fontsLoaded && { fontFamily: HEADING_FONT_BOLD }]}>
+          The Wall
+        </Text>
         {locationDenied && (
           <Text style={[styles.headerNote, { color: c.muted }]}>
             Enable location to sort orders by distance
@@ -287,6 +310,7 @@ export default function WallScreen() {
             <OrderCard
               order={item}
               c={c}
+              fontsLoaded={fontsLoaded}
               busy={busyOrderId === item.id}
               bidValue={bidDrafts[item.id] ?? ''}
               onBidChange={(v) => setBidDrafts((prev) => ({ ...prev, [item.id]: v }))}
@@ -328,10 +352,11 @@ function SkeletonCard({ c }: { c: Palette }) {
 }
 
 function OrderCard({
-  order, c, busy, bidValue, onBidChange, onAccept, onBid,
+  order, c, fontsLoaded, busy, bidValue, onBidChange, onAccept, onBid,
 }: {
   order: OrderWithDistance;
   c: Palette;
+  fontsLoaded: boolean;
   busy: boolean;
   bidValue: string;
   onBidChange: (v: string) => void;
@@ -355,13 +380,27 @@ function OrderCard({
       ) : null}
 
       <View style={styles.body}>
-        <Text style={[styles.route, { color: c.text }]} numberOfLines={2}>
+        <Text
+          style={[styles.route, { color: c.text }, fontsLoaded && { fontFamily: HEADING_FONT_BOLD }]}
+          numberOfLines={2}
+        >
           {order.point_a_address} <Text style={{ color: c.muted }}>→</Text> {order.point_b_address}
         </Text>
-        <Text style={[styles.description, { color: c.text }]} numberOfLines={3}>
+        <Text style={[styles.description, { color: c.muted }]} numberOfLines={3}>
           {order.item_description}
         </Text>
-        <Text style={[styles.category, { color: c.muted }]}>{order.item_category}</Text>
+        <View style={styles.tagRow}>
+          <View style={[styles.badge, styles.categoryBadge, { backgroundColor: `${NEUTRAL}22` }]}>
+            <Text
+              style={[styles.badgeText, { color: NEUTRAL }, fontsLoaded && { fontFamily: HEADING_FONT_SEMIBOLD }]}
+            >
+              {order.item_category.toUpperCase()}
+            </Text>
+          </View>
+          <Text style={[styles.parcelMeta, { color: c.muted }]}>
+            {formatWeight(order.weight_kg)} · {PARCEL_SIZE_LABEL[order.parcel_size]}
+          </Text>
+        </View>
       </View>
 
       <View style={[styles.actionRow, { borderTopColor: c.border }]}>
@@ -418,9 +457,11 @@ const styles = StyleSheet.create({
   photo: { width: '100%', aspectRatio: 4 / 3, backgroundColor: '#00000010' },
 
   body: { padding: 12, gap: 4 },
-  route: { fontSize: 15, fontWeight: '700' },
-  description: { fontSize: 14 },
-  category: { fontSize: 12, textTransform: 'uppercase', letterSpacing: 0.4, marginTop: 2 },
+  route: { fontSize: 17, fontWeight: '800', letterSpacing: -0.2, lineHeight: 22 },
+  description: { fontSize: 13, fontWeight: '400', lineHeight: 18 },
+  tagRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 6 },
+  categoryBadge: { alignSelf: 'flex-start' },
+  parcelMeta: { fontSize: 12, fontWeight: '600' },
 
   actionRow: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',

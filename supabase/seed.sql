@@ -15,7 +15,7 @@ do $$
 declare
   agent_id uuid;
 begin
-  select id into agent_id from auth.users where email = 'maleedu.navajyoth@gmail.com';
+  select id into agent_id from auth.users where email = 'm.navajyoth6@gmail.com';
 
   if agent_id is null then
     raise exception 'No auth.users row for that email — sign up through the app first, then re-run this.';
@@ -45,42 +45,49 @@ begin
     customer_id, status, item_description, item_category, photo_urls,
     point_a_address, point_b_address, point_a_lat, point_a_lng,
     delivery_speed, pricing_mode, price_paise, min_bid_paise,
+    weight_kg, parcel_size,
     legal_attestation_confirmed, created_at
   ) values
     -- Outside the 5-minute priority window — should accept cleanly for a qualified agent.
     (agent_id, 'open', 'SEED: Sealed envelope of signed contracts', 'Documents',
       array['https://picsum.photos/seed/genD1/800/600'],
       'Indiranagar 100 Feet Road, Bengaluru', 'Koramangala 5th Block, Bengaluru',
-      12.9750, 77.6410, 'super_fast', 'fixed', 24900, null, true, now() - interval '10 minutes'),
+      12.9750, 77.6410, 'super_fast', 'fixed', 24900, null,
+      0.2, 'small', true, now() - interval '10 minutes'),
 
     -- Inside the 5-minute priority window — still accepts for a qualified agent;
     -- drop the agent's stats (see comment above) to see the rejection message instead.
     (agent_id, 'open', 'SEED: Insulated box of frozen desserts', 'Food',
       array[]::text[],
       'MG Road Metro Station, Bengaluru', 'HSR Layout Sector 2, Bengaluru',
-      12.9760, 77.6050, 'super_fast', 'fixed', 29900, null, true, now()),
+      12.9760, 77.6050, 'super_fast', 'fixed', 29900, null,
+      3.5, 'medium', true, now()),
 
     (agent_id, 'open', 'SEED: Framed painting, handle with care', 'Fragile',
       array['https://picsum.photos/seed/genD3/800/600'],
       'Jayanagar 4th Block, Bengaluru', 'BTM Layout 2nd Stage, Bengaluru',
-      12.9300, 77.5830, 'express', 'fixed', 18900, null, true, now() - interval '15 minutes'),
+      12.9300, 77.5830, 'express', 'fixed', 18900, null,
+      6.0, 'large', true, now() - interval '15 minutes'),
 
     -- Auction order — exercises the bid input instead of Accept.
     (agent_id, 'open', 'SEED: Box of 20 wedding invitation cards', 'Documents',
       array[]::text[],
       'Whitefield Main Road, Bengaluru', 'Marathahalli Bridge, Bengaluru',
-      12.9698, 77.7500, 'express', 'auction', null, 15000, true, now() - interval '20 minutes'),
+      12.9698, 77.7500, 'express', 'auction', null, 15000,
+      1.8, 'small', true, now() - interval '20 minutes'),
 
     (agent_id, 'open', 'SEED: Spare laptop charger', 'Electronics',
       array['https://picsum.photos/seed/genD5/800/600'],
       'Electronic City Phase 1, Bengaluru', 'Silk Board Junction, Bengaluru',
-      12.8450, 77.6600, 'standard', 'fixed', 9900, null, true, now() - interval '1 hour'),
+      12.8450, 77.6600, 'standard', 'fixed', 9900, null,
+      0.4, 'small', true, now() - interval '1 hour'),
 
     -- No coordinates — exercises the "distance unknown, sorts last" fallback.
     (agent_id, 'open', 'SEED: Second-hand books, 3 boxes', 'Other',
       array['https://picsum.photos/seed/genD6/800/600'],
       'Yelahanka New Town, Bengaluru', 'Hebbal Flyover, Bengaluru',
-      null, null, 'standard', 'auction', null, 8000, true, now() - interval '2 hours');
+      null, null, 'standard', 'auction', null, 8000,
+      9.2, 'large', true, now() - interval '2 hours');
 
   raise notice 'Seeded 6 test orders for agent %', agent_id;
 end $$;
