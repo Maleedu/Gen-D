@@ -204,6 +204,12 @@ export default function WallScreen() {
 
   const [bidDrafts, setBidDrafts] = useState<Record<string, string>>({});
   const [busyOrderId, setBusyOrderId] = useState<string | null>(null);
+  // This agent's own existing bid per order (order_id -> offer_paise). bids
+  // has a unique(order_id, agent_id) constraint and handleBid upserts on
+  // that same pair, so a second submission updates the one row rather than
+  // creating another — a bid is never final. This is what lets the card
+  // show "You bid ₹X" instead of just going silent after the alert closes.
+  const [myBids, setMyBids] = useState<Record<string, number>>({});
 
   const coordsRef = useRef<Coords | null>(null);
   coordsRef.current = coords;
@@ -266,11 +272,32 @@ export default function WallScreen() {
     setOrders(withDistance((data ?? []) as unknown as Order[], coordsRef.current));
   }, []);
 
+  // Own bids only — RLS ("bids: agent manages own bid") wouldn't return
+  // anyone else's anyway, but this is also all the card needs to know.
+  // Prefills bidDrafts with the existing amount (rupees) wherever the agent
+  // hasn't already typed something this session, so reopening the screen
+  // shows an editable field seeded with their current bid, not a blank one.
+  const fetchMyBids = useCallback(async () => {
+    if (!agentId) return;
+    const { data, error } = await supabase.from('bids').select('order_id, offer_paise').eq('agent_id', agentId);
+    if (error) return;
+    const byOrder: Record<string, number> = {};
+    for (const row of data ?? []) byOrder[row.order_id] = row.offer_paise;
+    setMyBids(byOrder);
+    setBidDrafts((prev) => {
+      const next = { ...prev };
+      for (const [orderId, paise] of Object.entries(byOrder)) {
+        if (next[orderId] === undefined) next[orderId] = String(paise / 100);
+      }
+      return next;
+    });
+  }, [agentId]);
+
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
-    await fetchOrders();
+    await Promise.all([fetchOrders(), fetchMyBids()]);
     setRefreshing(false);
-  }, [fetchOrders]);
+  }, [fetchOrders, fetchMyBids]);
 
   useEffect(() => {
     loadProfile();
@@ -279,8 +306,9 @@ export default function WallScreen() {
   useEffect(() => {
     if (verified) {
       acquireLocation().then(() => fetchOrders());
+      fetchMyBids();
     }
-  }, [verified, fetchOrders]);
+  }, [verified, fetchOrders, fetchMyBids]);
 
   async function handleAccept(order: OrderWithDistance) {
     if (!agentId) return;
@@ -318,11 +346,20 @@ export default function WallScreen() {
       Alert.alert('Enter a bid amount');
       return;
     }
+    const offerPaise = Math.round(rupees * 100);
+    if (order.min_bid_paise != null && offerPaise < order.min_bid_paise) {
+      Alert.alert(
+        'Bid too low',
+        `This order's minimum bid is ${formatRupees(order.min_bid_paise)}. Enter an amount at or above that.`,
+      );
+      return;
+    }
+    const isUpdate = myBids[order.id] != null;
     setBusyOrderId(order.id);
     const { error } = await supabase
       .from('bids')
       .upsert(
-        { order_id: order.id, agent_id: agentId, offer_paise: Math.round(rupees * 100) },
+        { order_id: order.id, agent_id: agentId, offer_paise: offerPaise },
         { onConflict: 'order_id,agent_id' },
       );
     setBusyOrderId(null);
@@ -330,7 +367,8 @@ export default function WallScreen() {
       Alert.alert('Could not place bid', error.message);
       return;
     }
-    Alert.alert('Bid placed', `You bid ₹${raw} on this order.`);
+    setMyBids((prev) => ({ ...prev, [order.id]: offerPaise }));
+    Alert.alert(isUpdate ? 'Bid updated' : 'Bid placed', `You bid ₹${raw} on this order.`);
   }
 
   function selectMode(next: WallMode) {
@@ -593,6 +631,7 @@ export default function WallScreen() {
               fontsLoaded={fontsLoaded}
               busy={busyOrderId === item.id}
               bidValue={bidDrafts[item.id] ?? ''}
+              myBidPaise={myBids[item.id] ?? null}
               onBidChange={(v) => setBidDrafts((prev) => ({ ...prev, [item.id]: v }))}
               onAccept={handleAccept}
               onBid={handleBid}
@@ -648,13 +687,14 @@ function SkeletonCard({ c }: { c: Palette }) {
 }
 
 function OrderCard({
-  order, c, fontsLoaded, busy, bidValue, onBidChange, onAccept, onBid,
+  order, c, fontsLoaded, busy, bidValue, myBidPaise, onBidChange, onAccept, onBid,
 }: {
   order: OrderWithDistance;
   c: Palette;
   fontsLoaded: boolean;
   busy: boolean;
   bidValue: string;
+  myBidPaise: number | null;
   onBidChange: (v: string) => void;
   onAccept: (order: OrderWithDistance) => void;
   onBid: (order: OrderWithDistance) => void;
@@ -699,6 +739,12 @@ function OrderCard({
         </View>
       </View>
 
+      {order.pricing_mode === 'auction' && myBidPaise != null && (
+        <Text style={[styles.myBidNote, { color: c.muted }]}>
+          You bid {formatRupees(myBidPaise)} · tap Update to change
+        </Text>
+      )}
+
       <View style={[styles.actionRow, { borderTopColor: c.border }]}>
         {order.pricing_mode === 'fixed' ? (
           <>
@@ -726,7 +772,9 @@ function OrderCard({
               onPress={() => onBid(order)}
               disabled={busy}
             >
-              <Text style={styles.actionButtonText}>{busy ? 'Bidding…' : 'Bid'}</Text>
+              <Text style={styles.actionButtonText}>
+                {busy ? (myBidPaise != null ? 'Updating…' : 'Bidding…') : myBidPaise != null ? 'Update' : 'Bid'}
+              </Text>
             </Pressable>
           </>
         )}
@@ -786,6 +834,8 @@ const styles = StyleSheet.create({
   tagRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 6 },
   categoryBadge: { alignSelf: 'flex-start' },
   parcelMeta: { fontSize: 12, fontWeight: '600' },
+
+  myBidNote: { fontSize: 12, fontWeight: '600', paddingHorizontal: 12, paddingTop: 10 },
 
   actionRow: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
