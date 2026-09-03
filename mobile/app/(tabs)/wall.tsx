@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   View, Text, Pressable, StyleSheet, useColorScheme, Alert,
   FlatList, RefreshControl, TextInput, Animated, Easing, ActivityIndicator,
@@ -13,6 +13,7 @@ import {
   SpaceGrotesk_600SemiBold,
 } from '@expo-google-fonts/space-grotesk';
 import { supabase } from '../../lib/supabase';
+import { geocodeAddressOrThrow, getCurrentLocationOrThrow, LocationPermissionDeniedError } from '../../lib/location';
 
 const BLUE = '#1877F2';
 const RED = '#E41E3F';
@@ -27,6 +28,7 @@ const HEADING_FONT_SEMIBOLD = 'SpaceGrotesk_600SemiBold';
 type DeliverySpeed = 'super_fast' | 'express' | 'standard';
 type PricingMode = 'fixed' | 'auction';
 type ParcelSize = 'small' | 'medium' | 'large';
+type WallMode = 'all' | 'on_my_way';
 
 type Order = {
   id: string;
@@ -37,6 +39,8 @@ type Order = {
   point_b_address: string;
   point_a_lat: number | null;
   point_a_lng: number | null;
+  point_b_lat: number | null;
+  point_b_lng: number | null;
   delivery_speed: DeliverySpeed;
   pricing_mode: PricingMode;
   price_paise: number | null;
@@ -46,6 +50,8 @@ type Order = {
   created_at: string;
 };
 
+type Destination = { address: string; lat: number; lng: number };
+
 type OrderWithDistance = Order & { distanceKm: number | null };
 
 type Coords = { latitude: number; longitude: number };
@@ -53,6 +59,18 @@ type Coords = { latitude: number; longitude: number };
 type Palette = {
   bg: string; text: string; muted: string; inputBg: string;
   card: string; border: string; skeleton: string;
+};
+
+// "On My Way" corridor match radius, in km, from the route between the
+// agent's current location and their declared destination — tiered by
+// delivery speed since Super fast implies staying close to the agent's
+// actual path, not just loosely "in the area." Kept as its own lookup since
+// these are exactly the kind of numbers product will want tuned after
+// seeing them in practice.
+const ON_MY_WAY_RADIUS_KM: Record<DeliverySpeed, number> = {
+  standard: 5,
+  express: 5,
+  super_fast: 2,
 };
 
 const SPEED_RANK: Record<DeliverySpeed, number> = { super_fast: 0, express: 1, standard: 2 };
@@ -65,8 +83,8 @@ const SPEED_META: Record<DeliverySpeed, { label: string; color: string }> = {
 
 const ORDER_COLUMNS =
   'id, item_description, item_category, photo_urls, point_a_address, point_b_address, ' +
-  'point_a_lat, point_a_lng, delivery_speed, pricing_mode, price_paise, min_bid_paise, ' +
-  'weight_kg, parcel_size, created_at';
+  'point_a_lat, point_a_lng, point_b_lat, point_b_lng, delivery_speed, pricing_mode, ' +
+  'price_paise, min_bid_paise, weight_kg, parcel_size, created_at';
 
 const PARCEL_SIZE_LABEL: Record<ParcelSize, string> = { small: 'Small', medium: 'Medium', large: 'Large' };
 
@@ -82,6 +100,41 @@ function haversineKm(lat1: number, lng1: number, lat2: number, lng2: number) {
     Math.sin(dLat / 2) ** 2 +
     Math.cos((lat1 * Math.PI) / 180) * Math.cos((lat2 * Math.PI) / 180) * Math.sin(dLng / 2) ** 2;
   return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+type LatLng = { lat: number; lng: number };
+
+// Perpendicular ("cross-track") distance in km from a point to the straight
+// line segment between routeStart and routeEnd — not just the distance to
+// whichever endpoint happens to be nearer. Projects all three points onto a
+// flat plane around the segment's own mean latitude (scaling longitude by
+// cos(latitude) so degrees-of-lng aren't treated as the same length as
+// degrees-of-lat) and does ordinary 2D point-to-segment math. A full
+// great-circle cross-track formula would be more exact, but for a few-
+// hundred-km road corridor and a 5km threshold this flat approximation is
+// well within tolerance, and it stays consistent with the plain-haversine
+// level of rigor already used above.
+function distanceToRouteKm(point: LatLng, routeStart: LatLng, routeEnd: LatLng): number {
+  const refLatRad = ((routeStart.lat + routeEnd.lat) / 2) * (Math.PI / 180);
+  const KM_PER_DEG_LAT = 111.32;
+  const kmPerDegLng = KM_PER_DEG_LAT * Math.cos(refLatRad);
+
+  const toXY = (p: LatLng) => ({ x: p.lng * kmPerDegLng, y: p.lat * KM_PER_DEG_LAT });
+  const a = toXY(routeStart);
+  const b = toXY(routeEnd);
+  const p = toXY(point);
+
+  const abx = b.x - a.x;
+  const aby = b.y - a.y;
+  const lengthSq = abx * abx + aby * aby;
+
+  // Degenerate route (current location === destination) — falls back to
+  // plain point-to-point distance from routeStart.
+  const t = lengthSq === 0 ? 0 : Math.max(0, Math.min(1, ((p.x - a.x) * abx + (p.y - a.y) * aby) / lengthSq));
+
+  const closestX = a.x + t * abx;
+  const closestY = a.y + t * aby;
+  return Math.hypot(p.x - closestX, p.y - closestY);
 }
 
 function withDistance(rows: Order[], coords: Coords | null): OrderWithDistance[] {
@@ -130,10 +183,24 @@ export default function WallScreen() {
 
   const [coords, setCoords] = useState<Coords | null>(null);
   const [locationDenied, setLocationDenied] = useState(false);
+  // False until acquireLocation has settled once (granted or denied) — lets
+  // "On My Way" tell "still checking permission" apart from "denied", instead
+  // of treating a null coords the same way in both cases.
+  const [coordsResolved, setCoordsResolved] = useState(false);
 
   const [orders, setOrders] = useState<OrderWithDistance[] | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
+
+  const [mode, setMode] = useState<WallMode>('all');
+  // The agent's declared destination — loaded from profiles.active_destination_*
+  // (11_agent_destination.sql) so it survives app restarts, not just local
+  // screen state.
+  const [destination, setDestination] = useState<Destination | null>(null);
+  const [destinationInput, setDestinationInput] = useState('');
+  const [editingDestination, setEditingDestination] = useState(false);
+  const [savingDestination, setSavingDestination] = useState(false);
+  const [locatingDestination, setLocatingDestination] = useState(false);
 
   const [bidDrafts, setBidDrafts] = useState<Record<string, string>>({});
   const [busyOrderId, setBusyOrderId] = useState<string | null>(null);
@@ -152,7 +219,7 @@ export default function WallScreen() {
     setAgentId(user.id);
     const { data, error } = await supabase
       .from('profiles')
-      .select('is_agent_verified')
+      .select('is_agent_verified, active_destination_address, active_destination_lat, active_destination_lng')
       .eq('id', user.id)
       .single();
     setProfileLoading(false);
@@ -161,6 +228,14 @@ export default function WallScreen() {
       return;
     }
     setVerified(!!data?.is_agent_verified);
+    if (data?.active_destination_address && data.active_destination_lat != null && data.active_destination_lng != null) {
+      setDestination({
+        address: data.active_destination_address,
+        lat: data.active_destination_lat,
+        lng: data.active_destination_lng,
+      });
+      setDestinationInput(data.active_destination_address);
+    }
   }
 
   async function acquireLocation() {
@@ -172,8 +247,11 @@ export default function WallScreen() {
       }
       const pos = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
       setCoords({ latitude: pos.coords.latitude, longitude: pos.coords.longitude });
+      setLocationDenied(false);
     } catch {
       setLocationDenied(true);
+    } finally {
+      setCoordsResolved(true);
     }
   }
 
@@ -227,6 +305,11 @@ export default function WallScreen() {
     setOrders((prev) => (prev ? prev.filter((o) => o.id !== order.id) : prev));
   }
 
+  function retryLocation() {
+    setCoordsResolved(false);
+    acquireLocation();
+  }
+
   async function handleBid(order: OrderWithDistance) {
     if (!agentId) return;
     const raw = bidDrafts[order.id];
@@ -249,6 +332,109 @@ export default function WallScreen() {
     }
     Alert.alert('Bid placed', `You bid ₹${raw} on this order.`);
   }
+
+  function selectMode(next: WallMode) {
+    setMode(next);
+    // First time into "On My Way" with nothing saved yet — open the form
+    // immediately instead of switching to a tab that's just a prompt to tap
+    // something else.
+    if (next === 'on_my_way' && !destination) {
+      setEditingDestination(true);
+    }
+  }
+
+  // Persists the destination to profiles.active_destination_* (11_agent_destination.sql)
+  // so it survives app restarts, then updates local state. Shared by both the
+  // typed-address and "Use My Location" paths below.
+  async function persistDestination(address: string, lat: number, lng: number): Promise<void> {
+    if (!agentId) return;
+    const { error } = await supabase
+      .from('profiles')
+      .update({
+        active_destination_address: address,
+        active_destination_lat: lat,
+        active_destination_lng: lng,
+        active_destination_set_at: new Date().toISOString(),
+      })
+      .eq('id', agentId);
+    if (error) {
+      Alert.alert("Couldn't save destination", error.message);
+      return;
+    }
+    setDestination({ address, lat, lng });
+    setEditingDestination(false);
+  }
+
+  async function handleSetDestination() {
+    const address = destinationInput.trim();
+    if (!address) {
+      Alert.alert('Enter a destination', "Type where you're headed, or use your current location.");
+      return;
+    }
+    setSavingDestination(true);
+    try {
+      const { lat, lng } = await geocodeAddressOrThrow('destination', address);
+      await persistDestination(address, lat, lng);
+    } catch (err) {
+      Alert.alert('Could not set destination', err instanceof Error ? err.message : String(err));
+    } finally {
+      setSavingDestination(false);
+    }
+  }
+
+  // Coordinates come straight from the device fix — stored as-is, same as
+  // Point A on Post Item, rather than round-tripped back through geocoding.
+  async function handleUseCurrentLocationForDestination() {
+    setLocatingDestination(true);
+    try {
+      const { lat, lng, label } = await getCurrentLocationOrThrow();
+      setDestinationInput(label);
+      await persistDestination(label, lat, lng);
+    } catch (err) {
+      if (err instanceof LocationPermissionDeniedError) {
+        Alert.alert(
+          'Location access needed',
+          'Enable location access for Gen-D in your device settings to use this, or type your destination in manually.',
+        );
+      } else {
+        Alert.alert(
+          "Couldn't get your location",
+          'Check that location services are on and try again, or type your destination in manually.',
+        );
+      }
+    } finally {
+      setLocatingDestination(false);
+    }
+  }
+
+  // "On My Way" is a route corridor, not a single point: both pickup and
+  // dropoff have to fall within that speed tier's ON_MY_WAY_RADIUS_KM of the
+  // straight line between the agent's current location and their declared
+  // destination, so an agent going Bangalore → Hyderabad can pick up jobs
+  // anywhere along that road, not just ones clustered right next to
+  // Hyderabad. All three speed tiers are included — Super fast just gets the
+  // tighter radius, since it implies staying close to the agent's actual
+  // path rather than loosely "in the area." Needs both coords (current
+  // location) and destination — see the coordsResolved/locationDenied
+  // gating in the render below for what happens when coords isn't
+  // available. Orders missing either coordinate (pre-23_order_dropoff_coordinates.sql
+  // seed rows have no dropoff) can't be measured, so they're excluded rather
+  // than guessed at.
+  const visibleOrders = useMemo(() => {
+    if (mode === 'all' || !orders) return orders;
+    if (!destination || !coords) return [];
+    const routeStart: LatLng = { lat: coords.latitude, lng: coords.longitude };
+    const routeEnd: LatLng = { lat: destination.lat, lng: destination.lng };
+    return orders.filter((o) => {
+      if (o.point_a_lat == null || o.point_a_lng == null || o.point_b_lat == null || o.point_b_lng == null) {
+        return false;
+      }
+      const radiusKm = ON_MY_WAY_RADIUS_KM[o.delivery_speed];
+      const pickupDistance = distanceToRouteKm({ lat: o.point_a_lat, lng: o.point_a_lng }, routeStart, routeEnd);
+      const dropoffDistance = distanceToRouteKm({ lat: o.point_b_lat, lng: o.point_b_lng }, routeStart, routeEnd);
+      return pickupDistance <= radiusKm && dropoffDistance <= radiusKm;
+    });
+  }, [mode, orders, destination, coords]);
 
   if (profileLoading) {
     return (
@@ -287,13 +473,103 @@ export default function WallScreen() {
         )}
       </View>
 
-      {orders === null ? (
+      <View style={styles.modeRow}>
+        <ModePill label="Browse All" active={mode === 'all'} onPress={() => selectMode('all')} c={c} />
+        <ModePill label="On My Way" active={mode === 'on_my_way'} onPress={() => selectMode('on_my_way')} c={c} />
+      </View>
+
+      {mode === 'on_my_way' && (
+        destination && !editingDestination ? (
+          <View style={[styles.destinationBanner, { backgroundColor: c.inputBg, borderColor: c.border }]}>
+            <View style={{ flex: 1 }}>
+              <Text style={[styles.destinationBannerText, { color: c.text }]} numberOfLines={1}>
+                🎯 On your way to <Text style={{ fontWeight: '700' }}>{destination.address}</Text>
+              </Text>
+              <Text style={[styles.destinationBannerSubtext, { color: c.muted }]}>
+                Orders along your route · Super fast must be within {ON_MY_WAY_RADIUS_KM.super_fast} km
+              </Text>
+            </View>
+            <Pressable
+              onPress={() => {
+                setDestinationInput(destination.address);
+                setEditingDestination(true);
+              }}
+              hitSlop={8}
+            >
+              <Text style={styles.changeDestinationText}>Change</Text>
+            </Pressable>
+          </View>
+        ) : (
+          <View style={[styles.destinationForm, { backgroundColor: c.inputBg, borderColor: c.border }]}>
+            <Text style={[styles.destinationPrompt, { color: c.text }]}>Where are you headed?</Text>
+            <Text style={[styles.destinationHint, { color: c.muted }]}>
+              We&apos;ll show orders with both pickup and dropoff within {ON_MY_WAY_RADIUS_KM.standard} km
+              of the route between your current location and here (Super fast has to stay within{' '}
+              {ON_MY_WAY_RADIUS_KM.super_fast} km).
+            </Text>
+            <TextInput
+              style={[styles.input, { backgroundColor: c.bg, color: c.text, marginTop: 10 }]}
+              value={destinationInput}
+              onChangeText={setDestinationInput}
+              placeholder="e.g. Whitefield, Bengaluru"
+              placeholderTextColor={c.muted}
+            />
+            <View style={styles.destinationActions}>
+              <Pressable
+                onPress={handleUseCurrentLocationForDestination}
+                disabled={locatingDestination || savingDestination}
+                hitSlop={8}
+                style={({ pressed }) => pressed && { opacity: 0.6 }}
+              >
+                {locatingDestination ? (
+                  <ActivityIndicator size="small" color={BLUE} />
+                ) : (
+                  <Text style={styles.locateButtonText}>📍 Use My Location</Text>
+                )}
+              </Pressable>
+              <Pressable
+                onPress={handleSetDestination}
+                disabled={savingDestination || locatingDestination}
+                style={({ pressed }) => [
+                  styles.setDestinationButton,
+                  (pressed || savingDestination || locatingDestination) && { opacity: 0.7 },
+                ]}
+              >
+                <Text style={styles.setDestinationButtonText}>{savingDestination ? 'Setting…' : 'Set'}</Text>
+              </Pressable>
+            </View>
+            {destination && (
+              <Pressable onPress={() => setEditingDestination(false)} hitSlop={8} style={{ marginTop: 12 }}>
+                <Text style={[styles.cancelDestinationText, { color: c.muted }]}>Cancel</Text>
+              </Pressable>
+            )}
+          </View>
+        )
+      )}
+
+      {mode === 'on_my_way' && !destination ? null : mode === 'on_my_way' && !coordsResolved ? (
+        <View style={styles.centerFill}>
+          <ActivityIndicator color={BLUE} />
+          <Text style={[styles.locationWaitText, { color: c.muted }]}>Finding your current location…</Text>
+        </View>
+      ) : mode === 'on_my_way' && !coords ? (
+        <View style={styles.centerFill}>
+          <Text style={[styles.kycTitle, { color: c.text }]}>Location needed</Text>
+          <Text style={[styles.kycBody, { color: c.muted }]}>
+            On My Way matches orders against the route from where you are now — enable location
+            access for Gen-D to use it.
+          </Text>
+          <Pressable onPress={retryLocation} style={styles.setDestinationButton}>
+            <Text style={styles.setDestinationButtonText}>Try Again</Text>
+          </Pressable>
+        </View>
+      ) : orders === null ? (
         <View style={styles.list}>
           {[0, 1, 2].map((i) => <SkeletonCard key={i} c={c} />)}
         </View>
       ) : (
         <FlatList
-          data={orders}
+          data={mode === 'on_my_way' ? visibleOrders ?? [] : orders}
           keyExtractor={(item) => item.id}
           contentContainerStyle={styles.list}
           refreshControl={
@@ -302,7 +578,11 @@ export default function WallScreen() {
           ListEmptyComponent={
             <View style={styles.centerFill}>
               <Text style={{ color: c.muted, fontSize: 15 }}>
-                {loadError ? loadError : 'No open orders near you right now.'}
+                {loadError
+                  ? loadError
+                  : mode === 'on_my_way'
+                    ? 'No open orders along your route to your destination right now.'
+                    : 'No open orders near you right now.'}
               </Text>
             </View>
           }
@@ -321,6 +601,22 @@ export default function WallScreen() {
         />
       )}
     </SafeAreaView>
+  );
+}
+
+function ModePill({
+  label, active, onPress, c,
+}: { label: string; active: boolean; onPress: () => void; c: Palette }) {
+  return (
+    <Pressable
+      onPress={onPress}
+      style={[
+        styles.modePill,
+        { borderColor: active ? BLUE : c.border, backgroundColor: active ? `${BLUE}22` : c.inputBg },
+      ]}
+    >
+      <Text style={[styles.modePillText, { color: active ? BLUE : c.text }]}>{label}</Text>
+    </Pressable>
   );
 }
 
@@ -447,6 +743,34 @@ const styles = StyleSheet.create({
   headerNote: { fontSize: 12, marginTop: 4 },
   list: { padding: 16, paddingBottom: 40, gap: 16, flexGrow: 1 },
 
+  modeRow: { flexDirection: 'row', gap: 8, paddingHorizontal: 20, paddingBottom: 12 },
+  modePill: { flex: 1, paddingVertical: 10, borderRadius: 20, borderWidth: 1.5, alignItems: 'center' },
+  modePillText: { fontSize: 13, fontWeight: '700' },
+
+  destinationBanner: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+    marginHorizontal: 16, marginBottom: 12, padding: 14, borderRadius: 14, borderWidth: StyleSheet.hairlineWidth,
+    gap: 12,
+  },
+  destinationBannerText: { fontSize: 14 },
+  destinationBannerSubtext: { fontSize: 12, marginTop: 2 },
+  changeDestinationText: { color: BLUE, fontWeight: '700', fontSize: 13 },
+
+  destinationForm: {
+    marginHorizontal: 16, marginBottom: 12, padding: 16, borderRadius: 14, borderWidth: StyleSheet.hairlineWidth,
+  },
+  destinationPrompt: { fontSize: 15, fontWeight: '700' },
+  destinationHint: { fontSize: 12, marginTop: 4, lineHeight: 17 },
+  destinationActions: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 12,
+  },
+  cancelDestinationText: { fontSize: 12, fontWeight: '600' },
+
+  input: { borderRadius: 12, padding: 14, fontSize: 16 },
+  locateButtonText: { fontSize: 12, fontWeight: '700', color: BLUE },
+  setDestinationButton: { backgroundColor: BLUE, borderRadius: 10, paddingHorizontal: 18, paddingVertical: 9 },
+  setDestinationButtonText: { color: '#ffffff', fontSize: 13, fontWeight: '700' },
+
   card: { borderRadius: 16, borderWidth: StyleSheet.hairlineWidth, overflow: 'hidden' },
 
   metaRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', padding: 12 },
@@ -473,7 +797,8 @@ const styles = StyleSheet.create({
   actionButtonText: { color: '#ffffff', fontSize: 14, fontWeight: '700' },
 
   kycTitle: { fontSize: 20, fontWeight: '800', textAlign: 'center', marginBottom: 10 },
-  kycBody: { fontSize: 14, textAlign: 'center', lineHeight: 20 },
+  kycBody: { fontSize: 14, textAlign: 'center', lineHeight: 20, marginBottom: 20 },
+  locationWaitText: { fontSize: 14, marginTop: 12 },
 
   skeletonBadge: { width: 90, height: 22, borderRadius: 20, margin: 12, marginBottom: 0 },
   skeletonPhoto: { width: '100%', aspectRatio: 4 / 3, marginTop: 12 },

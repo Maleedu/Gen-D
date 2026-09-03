@@ -28,7 +28,10 @@ export default function HomeScreen() {
         </Text>
       </View>
 
-      <Pressable style={({ pressed }) => [styles.hero, pressed && styles.pressed]}>
+      <Pressable
+        onPress={() => router.push('/post-item')}
+        style={({ pressed }) => [styles.hero, pressed && styles.pressed]}
+      >
         <Text style={styles.heroTitle}>Post a parcel</Text>
         <Text style={styles.heroSubtitle}>Send something from point A to point B</Text>
       </Pressable>
