@@ -19,6 +19,7 @@ const MAPPING = {
   'chevron.left.forwardslash.chevron.right': 'code',
   'chevron.right': 'chevron-right',
   'list.bullet.rectangle.fill': 'assignment',
+  'trophy.fill': 'emoji-events',
 } as IconMapping;
 
 /**

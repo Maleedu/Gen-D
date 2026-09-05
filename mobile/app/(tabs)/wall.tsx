@@ -210,6 +210,15 @@ export default function WallScreen() {
   // creating another — a bid is never final. This is what lets the card
   // show "You bid ₹X" instead of just going silent after the alert closes.
   const [myBids, setMyBids] = useState<Record<string, number>>({});
+  // Highest standing offer_paise per order, across every agent — not just
+  // this agent's own. Needed for the real ascending-auction floor
+  // (25_enforce_ascending_bid.sql enforces the same max(min_bid_paise,
+  // highest offer) rule server-side) and so the input can show the real
+  // current floor instead of the order's original minimum, which becomes
+  // misleading the moment anyone's bid clears it. Sourced from the
+  // highest_bids_for_orders RPC, not a plain select — RLS on bids only
+  // lets an agent see their own rows, by design.
+  const [highestBids, setHighestBids] = useState<Record<string, number>>({});
 
   const coordsRef = useRef<Coords | null>(null);
   coordsRef.current = coords;
@@ -261,6 +270,23 @@ export default function WallScreen() {
     }
   }
 
+  // Current highest offer per order, across every agent, via the
+  // highest_bids_for_orders RPC (see 25_enforce_ascending_bid.sql for why
+  // this can't be a plain select). Merges into existing state rather than
+  // replacing it wholesale, so a bid this agent just placed (see handleBid's
+  // optimistic update) isn't briefly clobbered by a refresh for an order
+  // that's since dropped out of the visible list.
+  const fetchHighestBids = useCallback(async (orderIds: string[]) => {
+    if (orderIds.length === 0) return;
+    const { data, error } = await supabase.rpc('highest_bids_for_orders', { p_order_ids: orderIds });
+    if (error) return;
+    setHighestBids((prev) => {
+      const next = { ...prev };
+      for (const row of data ?? []) next[row.order_id] = row.highest_offer_paise;
+      return next;
+    });
+  }, []);
+
   const fetchOrders = useCallback(async () => {
     setLoadError(null);
     const { data, error } = await supabase.from('orders').select(ORDER_COLUMNS).eq('status', 'open');
@@ -269,8 +295,10 @@ export default function WallScreen() {
       setOrders([]);
       return;
     }
-    setOrders(withDistance((data ?? []) as unknown as Order[], coordsRef.current));
-  }, []);
+    const rows = (data ?? []) as unknown as Order[];
+    setOrders(withDistance(rows, coordsRef.current));
+    fetchHighestBids(rows.filter((o) => o.pricing_mode === 'auction').map((o) => o.id));
+  }, [fetchHighestBids]);
 
   // Own bids only — RLS ("bids: agent manages own bid") wouldn't return
   // anyone else's anyway, but this is also all the card needs to know.
@@ -331,6 +359,7 @@ export default function WallScreen() {
       return;
     }
     setOrders((prev) => (prev ? prev.filter((o) => o.id !== order.id) : prev));
+    router.push({ pathname: '/order/[id]', params: { id: order.id } });
   }
 
   function retryLocation() {
@@ -347,10 +376,15 @@ export default function WallScreen() {
       return;
     }
     const offerPaise = Math.round(rupees * 100);
-    if (order.min_bid_paise != null && offerPaise < order.min_bid_paise) {
+    // Same rule the database now enforces (25_enforce_ascending_bid.sql):
+    // a bid must strictly exceed the higher of the order's minimum and the
+    // current highest standing offer — including this agent's own bid if
+    // they're already leading, so they can't quietly lower it.
+    const floorPaise = Math.max(order.min_bid_paise ?? 0, highestBids[order.id] ?? 0);
+    if (floorPaise > 0 && offerPaise <= floorPaise) {
       Alert.alert(
         'Bid too low',
-        `This order's minimum bid is ${formatRupees(order.min_bid_paise)}. Enter an amount at or above that.`,
+        `This order's current floor is ${formatRupees(floorPaise)}. Enter an amount above that.`,
       );
       return;
     }
@@ -368,6 +402,7 @@ export default function WallScreen() {
       return;
     }
     setMyBids((prev) => ({ ...prev, [order.id]: offerPaise }));
+    setHighestBids((prev) => ({ ...prev, [order.id]: Math.max(prev[order.id] ?? 0, offerPaise) }));
     Alert.alert(isUpdate ? 'Bid updated' : 'Bid placed', `You bid ₹${raw} on this order.`);
   }
 
@@ -632,6 +667,7 @@ export default function WallScreen() {
               busy={busyOrderId === item.id}
               bidValue={bidDrafts[item.id] ?? ''}
               myBidPaise={myBids[item.id] ?? null}
+              highestBidPaise={highestBids[item.id] ?? null}
               onBidChange={(v) => setBidDrafts((prev) => ({ ...prev, [item.id]: v }))}
               onAccept={handleAccept}
               onBid={handleBid}
@@ -687,7 +723,7 @@ function SkeletonCard({ c }: { c: Palette }) {
 }
 
 function OrderCard({
-  order, c, fontsLoaded, busy, bidValue, myBidPaise, onBidChange, onAccept, onBid,
+  order, c, fontsLoaded, busy, bidValue, myBidPaise, highestBidPaise, onBidChange, onAccept, onBid,
 }: {
   order: OrderWithDistance;
   c: Palette;
@@ -695,12 +731,17 @@ function OrderCard({
   busy: boolean;
   bidValue: string;
   myBidPaise: number | null;
+  highestBidPaise: number | null;
   onBidChange: (v: string) => void;
   onAccept: (order: OrderWithDistance) => void;
   onBid: (order: OrderWithDistance) => void;
 }) {
   const speedMeta = SPEED_META[order.delivery_speed];
   const photo = order.photo_urls?.[0];
+  // The real current floor a new bid has to clear — the order's minimum
+  // until anyone's bid clears it, then whatever the highest standing bid
+  // is (25_enforce_ascending_bid.sql enforces this same number server-side).
+  const bidFloorPaise = Math.max(order.min_bid_paise ?? 0, highestBidPaise ?? 0);
 
   return (
     <View style={[styles.card, { backgroundColor: c.card, borderColor: c.border }]}>
@@ -739,9 +780,13 @@ function OrderCard({
         </View>
       </View>
 
-      {order.pricing_mode === 'auction' && myBidPaise != null && (
+      {order.pricing_mode === 'auction' && (myBidPaise != null || highestBidPaise != null) && (
         <Text style={[styles.myBidNote, { color: c.muted }]}>
-          You bid {formatRupees(myBidPaise)} · tap Update to change
+          {myBidPaise != null && highestBidPaise != null && myBidPaise >= highestBidPaise
+            ? `You bid ${formatRupees(myBidPaise)} — currently the highest · tap Update to raise`
+            : myBidPaise != null
+              ? `You bid ${formatRupees(myBidPaise)} — outbid, current highest is ${formatRupees(highestBidPaise)}`
+              : `Current highest: ${formatRupees(highestBidPaise)} · your bid must exceed this`}
         </Text>
       )}
 
@@ -762,7 +807,7 @@ function OrderCard({
             <TextInput
               style={[styles.bidInput, { backgroundColor: c.inputBg, color: c.text }]}
               keyboardType="decimal-pad"
-              placeholder={order.min_bid_paise ? `Min ₹${Math.round(order.min_bid_paise / 100)}` : '₹ your bid'}
+              placeholder={bidFloorPaise > 0 ? `More than ₹${Math.round(bidFloorPaise / 100)}` : '₹ your bid'}
               placeholderTextColor={c.muted}
               value={bidValue}
               onChangeText={onBidChange}

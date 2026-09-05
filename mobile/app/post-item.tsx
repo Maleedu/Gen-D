@@ -243,7 +243,7 @@ export default function PostItemScreen() {
         photoUrls = [publicUrlData.publicUrl];
       }
 
-      const { error: insertError } = await supabase.from('orders').insert({
+      const { data: inserted, error: insertError } = await supabase.from('orders').insert({
         customer_id: userId,
         item_description: description.trim(),
         item_category: category,
@@ -262,14 +262,14 @@ export default function PostItemScreen() {
         is_perishable: isPerishable,
         photo_urls: photoUrls,
         legal_attestation_confirmed: legalConfirmed,
-      });
+      }).select('id').single();
 
       if (insertError) {
         throw new Error(insertError.message);
       }
 
       Alert.alert('Posted', 'Your parcel is live on the Wall.');
-      router.replace('/');
+      router.replace({ pathname: '/order/[id]', params: { id: inserted.id } });
     } catch (err) {
       Alert.alert('Could not post item', err instanceof Error ? err.message : String(err));
     } finally {
