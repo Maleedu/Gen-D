@@ -1,0 +1,14 @@
+@import "tailwindcss";
+
+@theme {
+  /* Matches the mobile app's design language: Facebook-blue primary on a
+     black/white theme (see docs/admin-dashboard-handover.md). */
+  --color-brand: #1877f2;
+  --color-brand-hover: #1465cf;
+  --font-sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+}
+
+body {
+  background-color: #f5f6f8;
+  color: #0f1720;
+}
