@@ -75,8 +75,17 @@ export default function AgentStatsScreen() {
   }, []);
 
   useEffect(() => {
-    setLoading(true);
-    load().finally(() => setLoading(false));
+    let ignore = false;
+    async function startLoading() {
+      await load();
+      if (!ignore) {
+        setLoading(false);
+      }
+    }
+    startLoading();
+    return () => {
+      ignore = true;
+    };
   }, [load]);
 
   const onRefresh = useCallback(async () => {

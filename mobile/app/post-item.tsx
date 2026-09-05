@@ -90,12 +90,10 @@ export default function PostItemScreen() {
   const isPerishable = category === PERISHABLE_CATEGORY;
 
   // Perishable items are locked to Super fast (matches the DB check
-  // constraint from 15_perishable_super_fast_only.sql) — flip the selector
-  // over as soon as the category makes it perishable, so the disabled state
-  // and the value in state never disagree.
-  useEffect(() => {
-    if (isPerishable) setDeliverySpeed('super_fast');
-  }, [isPerishable]);
+  // constraint from 15_perishable_super_fast_only.sql). Derived at render
+  // time rather than synced into deliverySpeed via an effect, so the
+  // disabled state and the effective value can never disagree for a frame.
+  const effectiveDeliverySpeed: DeliverySpeed = isPerishable ? 'super_fast' : deliverySpeed;
 
   useEffect(() => {
     (async () => {
@@ -253,7 +251,7 @@ export default function PostItemScreen() {
         point_a_lng: pointA.lng,
         point_b_lat: pointB.lat,
         point_b_lng: pointB.lng,
-        delivery_speed: deliverySpeed,
+        delivery_speed: effectiveDeliverySpeed,
         pricing_mode: pricingMode,
         price_paise: pricingMode === 'fixed' ? Math.round(price * 100) : null,
         min_bid_paise: pricingMode === 'auction' ? Math.round(price * 100) : null,
@@ -359,7 +357,7 @@ export default function PostItemScreen() {
               <Chip
                 key={opt.value}
                 label={opt.label}
-                selected={deliverySpeed === opt.value}
+                selected={effectiveDeliverySpeed === opt.value}
                 onPress={() => !disabled && setDeliverySpeed(opt.value)}
                 c={c}
                 color={opt.color}

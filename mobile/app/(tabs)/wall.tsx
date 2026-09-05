@@ -221,37 +221,9 @@ export default function WallScreen() {
   const [highestBids, setHighestBids] = useState<Record<string, number>>({});
 
   const coordsRef = useRef<Coords | null>(null);
-  coordsRef.current = coords;
-
-  async function loadProfile() {
-    setProfileLoading(true);
-    const { data: { user } } = await supabase.auth.getUser();
-    if (!user) {
-      setProfileLoading(false);
-      router.replace('/login');
-      return;
-    }
-    setAgentId(user.id);
-    const { data, error } = await supabase
-      .from('profiles')
-      .select('is_agent_verified, active_destination_address, active_destination_lat, active_destination_lng')
-      .eq('id', user.id)
-      .single();
-    setProfileLoading(false);
-    if (error) {
-      setLoadError(error.message);
-      return;
-    }
-    setVerified(!!data?.is_agent_verified);
-    if (data?.active_destination_address && data.active_destination_lat != null && data.active_destination_lng != null) {
-      setDestination({
-        address: data.active_destination_address,
-        lat: data.active_destination_lat,
-        lng: data.active_destination_lng,
-      });
-      setDestinationInput(data.active_destination_address);
-    }
-  }
+  useEffect(() => {
+    coordsRef.current = coords;
+  }, [coords]);
 
   async function acquireLocation() {
     try {
@@ -328,14 +300,46 @@ export default function WallScreen() {
   }, [fetchOrders, fetchMyBids]);
 
   useEffect(() => {
+    async function loadProfile() {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) {
+        setProfileLoading(false);
+        router.replace('/login');
+        return;
+      }
+      setAgentId(user.id);
+      const { data, error } = await supabase
+        .from('profiles')
+        .select('is_agent_verified, active_destination_address, active_destination_lat, active_destination_lng')
+        .eq('id', user.id)
+        .single();
+      setProfileLoading(false);
+      if (error) {
+        setLoadError(error.message);
+        return;
+      }
+      setVerified(!!data?.is_agent_verified);
+      if (data?.active_destination_address && data.active_destination_lat != null && data.active_destination_lng != null) {
+        setDestination({
+          address: data.active_destination_address,
+          lat: data.active_destination_lat,
+          lng: data.active_destination_lng,
+        });
+        setDestinationInput(data.active_destination_address);
+      }
+    }
     loadProfile();
   }, []);
 
   useEffect(() => {
-    if (verified) {
-      acquireLocation().then(() => fetchOrders());
-      fetchMyBids();
+    if (!verified) return;
+    async function startLoading() {
+      await Promise.all([
+        acquireLocation().then(() => fetchOrders()),
+        fetchMyBids(),
+      ]);
     }
+    startLoading();
   }, [verified, fetchOrders, fetchMyBids]);
 
   async function handleAccept(order: OrderWithDistance) {
@@ -696,7 +700,7 @@ function ModePill({
 }
 
 function SkeletonCard({ c }: { c: Palette }) {
-  const pulse = useRef(new Animated.Value(0.4)).current;
+  const [pulse] = useState(() => new Animated.Value(0.4));
 
   useEffect(() => {
     const anim = Animated.loop(

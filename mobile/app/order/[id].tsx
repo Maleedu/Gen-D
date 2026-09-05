@@ -151,7 +151,9 @@ export default function OrderTrackingScreen() {
   // Realtime callbacks are set up once (see the subscription effect below)
   // but need the latest role without resubscribing every render.
   const roleRef = useRef<Role | null>(null);
-  roleRef.current = role;
+  useEffect(() => {
+    roleRef.current = role;
+  }, [role]);
 
   const loadAgentProfile = useCallback(async (agentId: string) => {
     const { data: profile, error } = await supabase
@@ -243,8 +245,17 @@ export default function OrderTrackingScreen() {
   }, [orderId, loadAgentProfile, checkPhotoExists, loadDeliveredSummary]);
 
   useEffect(() => {
-    setLoading(true);
-    loadEverything().finally(() => setLoading(false));
+    let ignore = false;
+    async function startLoading() {
+      await loadEverything();
+      if (!ignore) {
+        setLoading(false);
+      }
+    }
+    startLoading();
+    return () => {
+      ignore = true;
+    };
   }, [loadEverything]);
 
   const onRefresh = useCallback(async () => {
