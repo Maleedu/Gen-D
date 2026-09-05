@@ -90,12 +90,10 @@ export default function PostItemScreen() {
   const isPerishable = category === PERISHABLE_CATEGORY;
 
   // Perishable items are locked to Super fast (matches the DB check
-  // constraint from 15_perishable_super_fast_only.sql) — flip the selector
-  // over as soon as the category makes it perishable, so the disabled state
-  // and the value in state never disagree.
-  useEffect(() => {
-    if (isPerishable) setDeliverySpeed('super_fast');
-  }, [isPerishable]);
+  // constraint from 15_perishable_super_fast_only.sql). Derived at render
+  // time rather than synced into deliverySpeed via an effect, so the
+  // disabled state and the effective value can never disagree for a frame.
+  const effectiveDeliverySpeed: DeliverySpeed = isPerishable ? 'super_fast' : deliverySpeed;
 
   useEffect(() => {
     (async () => {
@@ -243,7 +241,7 @@ export default function PostItemScreen() {
         photoUrls = [publicUrlData.publicUrl];
       }
 
-      const { error: insertError } = await supabase.from('orders').insert({
+      const { data: inserted, error: insertError } = await supabase.from('orders').insert({
         customer_id: userId,
         item_description: description.trim(),
         item_category: category,
@@ -253,7 +251,7 @@ export default function PostItemScreen() {
         point_a_lng: pointA.lng,
         point_b_lat: pointB.lat,
         point_b_lng: pointB.lng,
-        delivery_speed: deliverySpeed,
+        delivery_speed: effectiveDeliverySpeed,
         pricing_mode: pricingMode,
         price_paise: pricingMode === 'fixed' ? Math.round(price * 100) : null,
         min_bid_paise: pricingMode === 'auction' ? Math.round(price * 100) : null,
@@ -262,14 +260,14 @@ export default function PostItemScreen() {
         is_perishable: isPerishable,
         photo_urls: photoUrls,
         legal_attestation_confirmed: legalConfirmed,
-      });
+      }).select('id').single();
 
       if (insertError) {
         throw new Error(insertError.message);
       }
 
       Alert.alert('Posted', 'Your parcel is live on the Wall.');
-      router.replace('/');
+      router.replace({ pathname: '/order/[id]', params: { id: inserted.id } });
     } catch (err) {
       Alert.alert('Could not post item', err instanceof Error ? err.message : String(err));
     } finally {
@@ -359,7 +357,7 @@ export default function PostItemScreen() {
               <Chip
                 key={opt.value}
                 label={opt.label}
-                selected={deliverySpeed === opt.value}
+                selected={effectiveDeliverySpeed === opt.value}
                 onPress={() => !disabled && setDeliverySpeed(opt.value)}
                 c={c}
                 color={opt.color}

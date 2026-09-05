@@ -86,7 +86,7 @@ export default function SignupScreen() {
 
         <View style={styles.switchRow}>
           <Switch value={isBusiness} onValueChange={setIsBusiness} trackColor={{ true: BLUE }} />
-          <Text style={[styles.switchLabel, { color: c.text }]}>I'm signing up as a business</Text>
+          <Text style={[styles.switchLabel, { color: c.text }]}>I&apos;m signing up as a business</Text>
         </View>
 
         {isBusiness && (
