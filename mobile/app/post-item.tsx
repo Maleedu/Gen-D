@@ -11,6 +11,8 @@ import { ImageManipulator, SaveFormat } from 'expo-image-manipulator';
 import { router } from 'expo-router';
 import { supabase } from '../lib/supabase';
 import { geocodeAddressOrThrow, getCurrentLocationOrThrow, LocationPermissionDeniedError } from '../lib/location';
+import { EXPLAINER_BANNER_KEYS, useExplainerBanner } from '../lib/explainer-banners';
+import { ExplainerBanner } from '../components/explainer-banner';
 
 const BLUE = '#1877F2';
 const RED = '#E41E3F';
@@ -78,6 +80,7 @@ export default function PostItemScreen() {
   const [deliverySpeed, setDeliverySpeed] = useState<DeliverySpeed>('standard');
   const [pricingMode, setPricingMode] = useState<PricingMode>('fixed');
   const [priceInput, setPriceInput] = useState('');
+  const auctionPricingBanner = useExplainerBanner(EXPLAINER_BANNER_KEYS.auctionPricing);
 
   const [weightKg, setWeightKg] = useState('');
   const [parcelSize, setParcelSize] = useState<ParcelSize | null>(null);
@@ -380,6 +383,15 @@ export default function PostItemScreen() {
           <Chip label="Fixed price" selected={pricingMode === 'fixed'} onPress={() => setPricingMode('fixed')} c={c} />
           <Chip label="Minimum bid (auction)" selected={pricingMode === 'auction'} onPress={() => setPricingMode('auction')} c={c} />
         </View>
+        {pricingMode === 'auction' && (
+          <ExplainerBanner
+            seen={auctionPricingBanner.seen}
+            onDismiss={auctionPricingBanner.dismiss}
+            title="How bidding works"
+            body="Set a starting price — agents can then bid at or above it. You'll see every bid and pick whichever one you want to accept: cheapest, fastest, most trusted, your choice."
+            isDark={isDark}
+          />
+        )}
         <TextInput
           style={[styles.input, { backgroundColor: c.inputBg, color: c.text, marginTop: 10 }]}
           value={priceInput}

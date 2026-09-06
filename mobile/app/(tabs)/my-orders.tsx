@@ -8,6 +8,8 @@ import { router } from 'expo-router';
 import { supabase } from '../../lib/supabase';
 import { AgentAvatar } from '../../components/agent-avatar';
 import { useViewMode } from '../../lib/view-mode';
+import { EXPLAINER_BANNER_KEYS, useExplainerBanner } from '../../lib/explainer-banners';
+import { ExplainerBanner } from '../../components/explainer-banner';
 
 const BLUE = '#1877F2';
 const AMBER = '#B7791F';
@@ -92,7 +94,8 @@ export default function MyOrdersScreen() {
   const [bids, setBids] = useState<BidWithProfile[] | null>(null);
   const [bidsLoading, setBidsLoading] = useState(false);
   const [bidsError, setBidsError] = useState<string | null>(null);
-  const [selectingBidId, setSelectingBidId] = useState<string | null>(null);
+  const [submittingBidId, setSubmittingBidId] = useState<string | null>(null);
+  const bidSelectionBanner = useExplainerBanner(EXPLAINER_BANNER_KEYS.bidSelection);
 
   const loadOrders = useCallback(async () => {
     setLoadError(null);
@@ -197,40 +200,41 @@ export default function MyOrdersScreen() {
     // Irreversible from this screen (there's no "un-accept" flow) — confirm
     // before submitting, per the handover doc's explicit call-out.
     Alert.alert(
-      'Select this bid?',
-      `Assign this delivery to ${bid.profile.first_name} ${bid.profile.last_name} for ${formatRupees(bid.offer_paise)}. This can't be undone from here.`,
+      'Accept this bid?',
+      `Accept ${formatRupees(bid.offer_paise)} for this delivery? This can't be undone.`,
       [
         { text: 'Cancel', style: 'cancel' },
-        { text: 'Select', onPress: () => confirmSelectBid(bid) },
+        { text: 'Accept', onPress: () => confirmSelectBid(bid.id) },
       ],
     );
   }
 
-  async function confirmSelectBid(bid: BidWithProfile) {
+  async function confirmSelectBid(bidId: string) {
     if (!reviewingOrderId) return;
-    setSelectingBidId(bid.id);
-    // No auto-resolve exists and none is added here — selection is always
-    // this manual customer action (settled decision, see the handover doc).
-    const { data, error } = await supabase
-      .from('orders')
-      .update({ accepted_agent_id: bid.agent_id, status: 'accepted' })
-      .eq('id', reviewingOrderId)
-      .eq('status', 'open')
-      .select('id');
-    setSelectingBidId(null);
+    setSubmittingBidId(bidId);
+    // accept_bid does all the verification (caller is the customer, order
+    // still open, bid belongs to this order) and fires the same DB-side
+    // logic as the direct agent-accept flow (pickup OTP, priority/speed
+    // gates) — no client-side re-implementation of any of that, see the
+    // handover doc. The one exception: if the order is no longer open (e.g.
+    // someone else got assigned first), that's stale-state on this screen,
+    // not a bid-specific rejection — recover the same way the old
+    // "order changed" branch used to, by leaving the review view.
+    const { error } = await supabase.rpc('accept_bid', {
+      p_order_id: reviewingOrderId,
+      p_bid_id: bidId,
+    });
+    setSubmittingBidId(null);
     if (error) {
-      Alert.alert("Couldn't select this bid", error.message);
+      Alert.alert('Could not accept this bid', error.message);
+      if (/no longer open/i.test(error.message)) {
+        setReviewingOrderId(null);
+        loadOrders();
+      }
       return;
     }
-    if (!data || data.length === 0) {
-      Alert.alert('This order changed', "It's no longer open — someone may have already been assigned.");
-      setReviewingOrderId(null);
-      loadOrders();
-      return;
-    }
-    const orderId = reviewingOrderId;
     setReviewingOrderId(null);
-    router.push({ pathname: '/order/[id]', params: { id: orderId } });
+    loadOrders();
   }
 
   if (loading) {
@@ -269,6 +273,17 @@ export default function MyOrdersScreen() {
             data={bids ?? []}
             keyExtractor={(item) => item.id}
             contentContainerStyle={styles.list}
+            ListHeaderComponent={
+              (bids?.length ?? 0) > 0 ? (
+                <ExplainerBanner
+                  seen={bidSelectionBanner.seen}
+                  onDismiss={bidSelectionBanner.dismiss}
+                  title="Choosing a bid"
+                  body="These are all the offers agents have made on your order. Tap any bid to accept it — the agent is notified immediately and your order moves to pickup."
+                  isDark={isDark}
+                />
+              ) : null
+            }
             ListEmptyComponent={
               <View style={styles.centerFill}>
                 <Text style={{ color: c.muted, fontSize: 15 }}>No bids yet — check back soon.</Text>
@@ -278,7 +293,8 @@ export default function MyOrdersScreen() {
               <BidRow
                 bid={item}
                 c={c}
-                busy={selectingBidId === item.id}
+                submitting={submittingBidId === item.id}
+                disabled={submittingBidId !== null}
                 onSelect={() => handleSelectBid(item)}
               />
             )}
@@ -340,8 +356,8 @@ function OrderRow({
 }
 
 function BidRow({
-  bid, c, busy, onSelect,
-}: { bid: BidWithProfile; c: Palette; busy: boolean; onSelect: () => void }) {
+  bid, c, submitting, disabled, onSelect,
+}: { bid: BidWithProfile; c: Palette; submitting: boolean; disabled: boolean; onSelect: () => void }) {
   return (
     <View style={[styles.card, { backgroundColor: c.card, borderColor: c.border }]}>
       <View style={styles.bidRow}>
@@ -363,10 +379,10 @@ function BidRow({
       </View>
       <Pressable
         onPress={onSelect}
-        disabled={busy}
-        style={({ pressed }) => [styles.primaryButton, (pressed || busy) && { opacity: 0.7 }]}
+        disabled={disabled}
+        style={({ pressed }) => [styles.primaryButton, (pressed || disabled) && { opacity: 0.7 }]}
       >
-        <Text style={styles.primaryButtonText}>{busy ? 'Selecting…' : 'Select this bid'}</Text>
+        <Text style={styles.primaryButtonText}>{submitting ? 'Selecting…' : 'Select this bid'}</Text>
       </Pressable>
     </View>
   );
