@@ -23,6 +23,8 @@ const MAPPING = {
   'chevron.right': 'chevron-right',
   'list.bullet.rectangle.fill': 'assignment',
   'trophy.fill': 'emoji-events',
+  'shippingbox.fill': 'inventory-2',
+  'person.fill': 'person',
 } as IconMapping;
 
 /**

@@ -4,13 +4,13 @@ import {
   ActivityIndicator, ScrollView, RefreshControl, TextInput, Linking,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { Image } from 'expo-image';
 import * as ImagePicker from 'expo-image-picker';
 import { File } from 'expo-file-system';
 import { ImageManipulator, SaveFormat } from 'expo-image-manipulator';
 import { router, Stack, useLocalSearchParams } from 'expo-router';
 import { supabase } from '../../lib/supabase';
 import { fetchGamificationProfile, LEVEL_COLOR } from '../../lib/gamification';
+import { AgentAvatar } from '../../components/agent-avatar';
 
 const BLUE = '#1877F2';
 const RED = '#E41E3F';
@@ -74,7 +74,7 @@ const ORDER_COLUMNS =
   'delivery_speed, pricing_mode, price_paise, min_bid_paise';
 
 const SPEED_META: Record<DeliverySpeed, { label: string; color: string }> = {
-  super_fast: { label: 'Super fast', color: RED },
+  super_fast: { label: 'Priority', color: RED },
   express: { label: 'Express', color: AMBER },
   standard: { label: 'Standard', color: NEUTRAL },
 };
@@ -101,11 +101,6 @@ function formatRupees(paise: number | null) {
 // default for a `https://` link.
 function mapsUrl(lat: number, lng: number) {
   return `https://www.google.com/maps/dir/?api=1&destination=${lat},${lng}`;
-}
-
-function initials(firstName: string, lastName: string) {
-  const s = `${firstName?.[0] ?? ''}${lastName?.[0] ?? ''}`.toUpperCase();
-  return s || '?';
 }
 
 export default function OrderTrackingScreen() {
@@ -148,12 +143,34 @@ export default function OrderTrackingScreen() {
   const [sealResult, setSealResult] = useState<SealStatus | null>(null);
   const [complaintStatus, setComplaintStatus] = useState<ComplaintStatus | null>(null);
 
+  // Own auth id — needed as `rater_id` when submitting a rating (RLS
+  // requires it match auth.uid(), so it has to come from the client's own
+  // session, not be trusted from anywhere else).
+  const [userId, setUserId] = useState<string | null>(null);
+
+  // The current viewer's own rating of the other party on this order, if
+  // any. Null legitimately means "hasn't rated yet" once ratingLoading is
+  // false — see the ratings handover doc's per-role branching.
+  const [myRating, setMyRating] = useState<{ stars: number; comment: string | null } | null>(null);
+  const [ratingLoading, setRatingLoading] = useState(true);
+  // Agent-only: raw completed_deliveries_count, fetched fresh rather than
+  // reused from the gamification level breakpoints (5/20/50/100/250) since
+  // the rating gate is a plain "count >= 10" check.
+  const [myDeliveryCount, setMyDeliveryCount] = useState<number | null>(null);
+  const [ratingStars, setRatingStars] = useState(0);
+  const [ratingComment, setRatingComment] = useState('');
+  const [submittingRating, setSubmittingRating] = useState(false);
+
   // Realtime callbacks are set up once (see the subscription effect below)
-  // but need the latest role without resubscribing every render.
+  // but need the latest role/user without resubscribing every render.
   const roleRef = useRef<Role | null>(null);
+  const userIdRef = useRef<string | null>(null);
   useEffect(() => {
     roleRef.current = role;
   }, [role]);
+  useEffect(() => {
+    userIdRef.current = userId;
+  }, [userId]);
 
   const loadAgentProfile = useCallback(async (agentId: string) => {
     const { data: profile, error } = await supabase
@@ -208,6 +225,37 @@ export default function OrderTrackingScreen() {
     setComplaintStatus((complaint?.status as ComplaintStatus) ?? null);
   }, [orderId]);
 
+  // Own rating on this order, plus (agent only) the raw delivery count that
+  // gates whether they can rate the customer at all. `r`/`uid` are passed
+  // explicitly rather than read from state, since this can run right after
+  // loadEverything determines them but before the corresponding setState
+  // calls have flushed.
+  const loadRatingInfo = useCallback(
+    async (r: Role, uid: string) => {
+      if (!orderId) return;
+      setRatingLoading(true);
+      const ratingPromise = supabase
+        .from('ratings')
+        .select('stars, comment')
+        .eq('order_id', orderId)
+        .eq('rater_id', uid)
+        .maybeSingle();
+      if (r === 'agent') {
+        const [{ data: rating }, { data: profile }] = await Promise.all([
+          ratingPromise,
+          supabase.from('profiles').select('completed_deliveries_count').eq('id', uid).maybeSingle(),
+        ]);
+        setMyRating(rating ? { stars: rating.stars, comment: rating.comment } : null);
+        setMyDeliveryCount(profile?.completed_deliveries_count ?? 0);
+      } else {
+        const { data: rating } = await ratingPromise;
+        setMyRating(rating ? { stars: rating.stars, comment: rating.comment } : null);
+      }
+      setRatingLoading(false);
+    },
+    [orderId],
+  );
+
   const loadEverything = useCallback(async () => {
     if (!orderId) return;
     setLoadError(null);
@@ -238,11 +286,15 @@ export default function OrderTrackingScreen() {
 
     setRole(r);
     setOrder(o);
+    setUserId(user.id);
 
     if (r === 'customer' && o.accepted_agent_id) loadAgentProfile(o.accepted_agent_id);
     if (o.status === 'picked_up') checkPhotoExists();
-    if (o.status === 'delivered') loadDeliveredSummary();
-  }, [orderId, loadAgentProfile, checkPhotoExists, loadDeliveredSummary]);
+    if (o.status === 'delivered') {
+      loadDeliveredSummary();
+      loadRatingInfo(r, user.id);
+    }
+  }, [orderId, loadAgentProfile, checkPhotoExists, loadDeliveredSummary, loadRatingInfo]);
 
   useEffect(() => {
     let ignore = false;
@@ -280,7 +332,10 @@ export default function OrderTrackingScreen() {
           setOrder(next);
           if (roleRef.current === 'customer' && next.accepted_agent_id) loadAgentProfile(next.accepted_agent_id);
           if (next.status === 'picked_up') checkPhotoExists();
-          if (next.status === 'delivered') loadDeliveredSummary();
+          if (next.status === 'delivered') {
+            loadDeliveredSummary();
+            if (roleRef.current && userIdRef.current) loadRatingInfo(roleRef.current, userIdRef.current);
+          }
         },
       )
       .on(
@@ -292,7 +347,7 @@ export default function OrderTrackingScreen() {
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [orderId, loadAgentProfile, checkPhotoExists, loadDeliveredSummary]);
+  }, [orderId, loadAgentProfile, checkPhotoExists, loadDeliveredSummary, loadRatingInfo]);
 
   async function handleRevealOtp() {
     if (!order) return;
@@ -428,6 +483,42 @@ export default function OrderTrackingScreen() {
       return;
     }
     submitSeal('intact');
+  }
+
+  async function handleSubmitRating() {
+    if (!order || !role || !userId) return;
+    if (ratingStars < 1) {
+      Alert.alert('Pick a rating', 'Tap a star to rate before submitting.');
+      return;
+    }
+    const rateeId = role === 'customer' ? order.accepted_agent_id : order.customer_id;
+    if (!rateeId) return; // shouldn't happen once delivered — every delivered order has both parties
+
+    setSubmittingRating(true);
+    const { error } = await supabase.from('ratings').insert({
+      order_id: order.id,
+      rater_id: userId,
+      ratee_id: rateeId,
+      rater_role: role,
+      stars: ratingStars,
+      comment: ratingComment.trim() || null,
+    });
+    setSubmittingRating(false);
+
+    if (error) {
+      // 23505 = unique-violation on (order_id, rater_id) — a real safety
+      // net (e.g. a stale UI after rating from another device), not just a
+      // UI convenience. Resync from the server rather than trusting local
+      // state once this happens.
+      if (error.code === '23505') {
+        Alert.alert('Already rated', "You've already submitted a rating for this order.");
+        loadRatingInfo(role, userId);
+      } else {
+        Alert.alert("Couldn't submit rating", error.message);
+      }
+      return;
+    }
+    setMyRating({ stars: ratingStars, comment: ratingComment.trim() || null });
   }
 
   function handleContactAgent() {
@@ -636,9 +727,44 @@ export default function OrderTrackingScreen() {
                 </Text>
               </View>
             )}
-            <Text style={[styles.note, { color: c.muted, marginTop: 14 }]}>
-              Rating isn&apos;t available yet — coming soon.
+            <View style={[styles.divider, { backgroundColor: c.border }]} />
+            <Text style={[styles.sectionLabel, { color: c.muted }]}>
+              {role === 'customer' ? 'Rate your agent' : 'Rate the customer'}
             </Text>
+            {ratingLoading ? (
+              <ActivityIndicator color={BLUE} style={{ marginTop: 4 }} />
+            ) : myRating ? (
+              <>
+                <Text style={[styles.starDisplay, { color: AMBER }]}>
+                  {'★'.repeat(myRating.stars)}
+                  {'☆'.repeat(5 - myRating.stars)}
+                </Text>
+                {!!myRating.comment && <Text style={[styles.note, { color: c.muted }]}>{myRating.comment}</Text>}
+              </>
+            ) : role === 'agent' && (myDeliveryCount ?? 0) < 10 ? (
+              <Text style={[styles.note, { color: c.muted }]}>
+                Rate customers once you&apos;ve completed 10 deliveries — {10 - (myDeliveryCount ?? 0)} to go.
+              </Text>
+            ) : (
+              <>
+                <StarPicker value={ratingStars} onChange={setRatingStars} c={c} />
+                <TextInput
+                  style={[styles.input, styles.commentInput, { backgroundColor: c.inputBg, color: c.text }]}
+                  value={ratingComment}
+                  onChangeText={setRatingComment}
+                  placeholder="Add a comment (optional)"
+                  placeholderTextColor={c.muted}
+                  multiline
+                />
+                <Pressable
+                  onPress={handleSubmitRating}
+                  disabled={submittingRating}
+                  style={({ pressed }) => [styles.primaryButton, (pressed || submittingRating) && { opacity: 0.7 }]}
+                >
+                  <Text style={styles.primaryButtonText}>{submittingRating ? 'Submitting…' : 'Submit rating'}</Text>
+                </Pressable>
+              </>
+            )}
           </View>
         )}
 
@@ -663,6 +789,18 @@ function MapsButton({ label, onPress }: { label: string; onPress: () => void }) 
   );
 }
 
+function StarPicker({ value, onChange, c }: { value: number; onChange: (n: number) => void; c: Palette }) {
+  return (
+    <View style={styles.starRow}>
+      {[1, 2, 3, 4, 5].map((n) => (
+        <Pressable key={n} onPress={() => onChange(n)} hitSlop={8}>
+          <Text style={[styles.starChar, { color: n <= value ? AMBER : c.border }]}>★</Text>
+        </Pressable>
+      ))}
+    </View>
+  );
+}
+
 function AgentCard({ agent, c, onContact }: { agent: AgentProfile | null; c: Palette; onContact: () => void }) {
   if (!agent) {
     return (
@@ -675,13 +813,7 @@ function AgentCard({ agent, c, onContact }: { agent: AgentProfile | null; c: Pal
   return (
     <View style={[styles.card, { backgroundColor: c.card, borderColor: c.border }]}>
       <View style={styles.agentRow}>
-        {agent.avatar_url ? (
-          <Image source={{ uri: agent.avatar_url }} style={styles.avatar} contentFit="cover" />
-        ) : (
-          <View style={[styles.avatar, styles.avatarFallback, { backgroundColor: BLUE }]}>
-            <Text style={styles.avatarFallbackText}>{initials(agent.first_name, agent.last_name)}</Text>
-          </View>
-        )}
+        <AgentAvatar firstName={agent.first_name} lastName={agent.last_name} avatarUrl={agent.avatar_url} size={56} color={BLUE} />
         <View style={{ flex: 1 }}>
           <View style={styles.agentNameRow}>
             <Text style={[styles.agentName, { color: c.text }]}>{agent.first_name} {agent.last_name}</Text>
@@ -757,10 +889,14 @@ const styles = StyleSheet.create({
   complaintBanner: { borderRadius: 12, borderWidth: 1, padding: 12, marginTop: 12 },
   complaintText: { fontSize: 13, fontWeight: '600', lineHeight: 18 },
 
+  starRow: { flexDirection: 'row', gap: 6, marginBottom: 12 },
+  starChar: { fontSize: 30 },
+  starDisplay: { fontSize: 24, marginVertical: 2 },
+  commentInput: {
+    textAlign: 'left', letterSpacing: 0, fontSize: 14, minHeight: 70, textAlignVertical: 'top',
+  },
+
   agentRow: { flexDirection: 'row', alignItems: 'center', gap: 12 },
-  avatar: { width: 56, height: 56, borderRadius: 28 },
-  avatarFallback: { alignItems: 'center', justifyContent: 'center' },
-  avatarFallbackText: { color: '#ffffff', fontSize: 18, fontWeight: '800' },
   agentNameRow: { flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: 6 },
   agentName: { fontSize: 16, fontWeight: '800' },
   agentMeta: { fontSize: 12, marginTop: 2 },

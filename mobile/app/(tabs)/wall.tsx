@@ -63,7 +63,7 @@ type Palette = {
 
 // "On My Way" corridor match radius, in km, from the route between the
 // agent's current location and their declared destination — tiered by
-// delivery speed since Super fast implies staying close to the agent's
+// delivery speed since Priority implies staying close to the agent's
 // actual path, not just loosely "in the area." Kept as its own lookup since
 // these are exactly the kind of numbers product will want tuned after
 // seeing them in practice.
@@ -76,7 +76,7 @@ const ON_MY_WAY_RADIUS_KM: Record<DeliverySpeed, number> = {
 const SPEED_RANK: Record<DeliverySpeed, number> = { super_fast: 0, express: 1, standard: 2 };
 
 const SPEED_META: Record<DeliverySpeed, { label: string; color: string }> = {
-  super_fast: { label: 'Super fast', color: RED },
+  super_fast: { label: 'Priority', color: RED },
   express: { label: 'Express', color: AMBER },
   standard: { label: 'Standard', color: NEUTRAL },
 };
@@ -332,7 +332,10 @@ export default function WallScreen() {
   }, []);
 
   useEffect(() => {
-    if (!verified) return;
+    // Browsing works regardless of KYC status (see the customer-driver mode
+    // handover doc, section 5) — this only waits for the initial profile
+    // fetch to resolve at all, not for `verified` to be true.
+    if (verified === null) return;
     async function startLoading() {
       await Promise.all([
         acquireLocation().then(() => fetchOrders()),
@@ -344,6 +347,17 @@ export default function WallScreen() {
 
   async function handleAccept(order: OrderWithDistance) {
     if (!agentId) return;
+    // Checked at the moment of action, not at screen-load time — the whole
+    // Wall stays browsable for an unverified agent, only Accept/bid are
+    // blocked (see the passive banner rendered below instead of a full-screen
+    // gate).
+    if (verified === false) {
+      Alert.alert(
+        'Complete KYC to accept orders',
+        "Your agent profile isn't verified yet. Once your documents are approved, you'll be able to accept and bid on deliveries.",
+      );
+      return;
+    }
     setBusyOrderId(order.id);
     const { data, error } = await supabase
       .from('orders')
@@ -373,6 +387,13 @@ export default function WallScreen() {
 
   async function handleBid(order: OrderWithDistance) {
     if (!agentId) return;
+    if (verified === false) {
+      Alert.alert(
+        'Complete KYC to bid on orders',
+        "Your agent profile isn't verified yet. Once your documents are approved, you'll be able to accept and bid on deliveries.",
+      );
+      return;
+    }
     const raw = bidDrafts[order.id];
     const rupees = raw ? parseFloat(raw) : NaN;
     if (!raw || Number.isNaN(rupees) || rupees <= 0) {
@@ -489,7 +510,7 @@ export default function WallScreen() {
   // straight line between the agent's current location and their declared
   // destination, so an agent going Bangalore → Hyderabad can pick up jobs
   // anywhere along that road, not just ones clustered right next to
-  // Hyderabad. All three speed tiers are included — Super fast just gets the
+  // Hyderabad. All three speed tiers are included — Priority just gets the
   // tighter radius, since it implies staying close to the agent's actual
   // path rather than loosely "in the area." Needs both coords (current
   // location) and destination — see the coordsResolved/locationDenied
@@ -523,20 +544,6 @@ export default function WallScreen() {
     );
   }
 
-  if (verified === false) {
-    return (
-      <SafeAreaView style={[styles.container, { backgroundColor: c.bg }]}>
-        <View style={styles.centerFill}>
-          <Text style={[styles.kycTitle, { color: c.text }]}>Complete KYC to accept orders</Text>
-          <Text style={[styles.kycBody, { color: c.muted }]}>
-            Your agent profile isn&apos;t verified yet. Once your documents are reviewed and
-            approved, open orders will appear here for you to accept.
-          </Text>
-        </View>
-      </SafeAreaView>
-    );
-  }
-
   return (
     <SafeAreaView style={[styles.container, { backgroundColor: c.bg }]} edges={['top', 'left', 'right']}>
       <View style={styles.header}>
@@ -549,6 +556,15 @@ export default function WallScreen() {
           </Text>
         )}
       </View>
+
+      {verified === false && (
+        <View style={[styles.kycBanner, { backgroundColor: `${AMBER}22`, borderColor: AMBER }]}>
+          <Text style={[styles.kycBannerText, { color: AMBER }]}>
+            Complete KYC to accept orders. Your agent profile isn&apos;t verified yet. Once your
+            documents are approved, you&apos;ll be able to accept and bid on deliveries.
+          </Text>
+        </View>
+      )}
 
       <View style={styles.modeRow}>
         <ModePill label="Browse All" active={mode === 'all'} onPress={() => selectMode('all')} c={c} />
@@ -563,7 +579,7 @@ export default function WallScreen() {
                 🎯 On your way to <Text style={{ fontWeight: '700' }}>{destination.address}</Text>
               </Text>
               <Text style={[styles.destinationBannerSubtext, { color: c.muted }]}>
-                Orders along your route · Super fast must be within {ON_MY_WAY_RADIUS_KM.super_fast} km
+                Orders along your route · Priority must be within {ON_MY_WAY_RADIUS_KM.super_fast} km
               </Text>
             </View>
             <Pressable
@@ -581,7 +597,7 @@ export default function WallScreen() {
             <Text style={[styles.destinationPrompt, { color: c.text }]}>Where are you headed?</Text>
             <Text style={[styles.destinationHint, { color: c.muted }]}>
               We&apos;ll show orders with both pickup and dropoff within {ON_MY_WAY_RADIUS_KM.standard} km
-              of the route between your current location and here (Super fast has to stay within{' '}
+              of the route between your current location and here (Priority has to stay within{' '}
               {ON_MY_WAY_RADIUS_KM.super_fast} km).
             </Text>
             <TextInput
@@ -897,6 +913,10 @@ const styles = StyleSheet.create({
 
   kycTitle: { fontSize: 20, fontWeight: '800', textAlign: 'center', marginBottom: 10 },
   kycBody: { fontSize: 14, textAlign: 'center', lineHeight: 20, marginBottom: 20 },
+  kycBanner: {
+    marginHorizontal: 16, marginBottom: 12, padding: 12, borderRadius: 12, borderWidth: 1,
+  },
+  kycBannerText: { fontSize: 12, lineHeight: 17, fontWeight: '600' },
   locationWaitText: { fontSize: 14, marginTop: 12 },
 
   skeletonBadge: { width: 90, height: 22, borderRadius: 20, margin: 12, marginBottom: 0 },

@@ -6,21 +6,31 @@ Backend is fully built and tested in Supabase (project `ovwhuvkwxxlmhsldgrwo`). 
 
 ## Screen behavior, by order status × viewer role
 
-| Status | Customer view | Agent view |
-|---|---|---|
-| `open` | Waiting-for-agent state. Show `point_a_address` → `point_b_address`, `price_paise`, `delivery_speed`. No agent card. | N/A — not yet accepted |
-| `accepted` | Agent card: `avatar_url` (fallback to initials if null), `first_name`/`last_name`, `avg_rating_as_agent`, `completed_deliveries_count`, vehicle (from `agent_vehicles`). "Contact" button → `tel:{phone_number}`. "Open in Maps" → deep link to `point_a`. OTP shown via `get_pickup_otp()` RPC — read aloud to agent at handoff. | "Open in Maps" → `point_a`. OTP entry field → `verify_pickup_otp()`. |
-| `picked_up` | "Open in Maps" → `point_b`. **Seal-check buttons (`intact`/`broken`) must be hidden/disabled until a `delivery_photos` row exists for this order** — check for it (or attempt the call and handle the specific error) before showing this UI, since `verify_delivery_seal` will hard-reject until the photo exists. | "Open in Maps" → `point_b`. Camera/upload action → `submit_delivery_photo()`. Nothing else to do here until this succeeds. |
-| `delivered` | Summary view. Show seal result from `delivery_verifications`. Show a complaint banner if one exists (`complaints` where `order_id` matches). Point toward rating screen (not built yet). | Same |
-| `cancelled` | Simple cancelled state, no actions | Same |
+| Status      | Customer view                                                                                                                                                                                                                                                                                                                     | Agent view                                                                                                                 |
+| ----------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
+| `open`      | Waiting-for-agent state. Show `point_a_address` → `point_b_address`, `price_paise`, `delivery_speed`. No agent card.                                                                                                                                                                                                              | N/A — not yet accepted                                                                                                     |
+| `accepted`  | Agent card: `avatar_url` (fallback to initials if null), `first_name`/`last_name`, `avg_rating_as_agent`, `completed_deliveries_count`, vehicle (from `agent_vehicles`). "Contact" button → `tel:{phone_number}`. "Open in Maps" → deep link to `point_a`. OTP shown via `get_pickup_otp()` RPC — read aloud to agent at handoff. | "Open in Maps" → `point_a`. OTP entry field → `verify_pickup_otp()`.                                                       |
+| `picked_up` | "Open in Maps" → `point_b`. **Seal-check buttons (`intact`/`broken`) must be hidden/disabled until a `delivery_photos` row exists for this order** — check for it (or attempt the call and handle the specific error) before showing this UI, since `verify_delivery_seal` will hard-reject until the photo exists.               | "Open in Maps" → `point_b`. Camera/upload action → `submit_delivery_photo()`. Nothing else to do here until this succeeds. |
+| `delivered` | Summary view. Show seal result from `delivery_verifications`. Show a complaint banner if one exists (`complaints` where `order_id` matches). Point toward rating screen (not built yet).                                                                                                                                          | Same                                                                                                                       |
+| `cancelled` | Simple cancelled state, no actions                                                                                                                                                                                                                                                                                                | Same                                                                                                                       |
 
 **Realtime:** subscribe to `orders` row changes filtered by `id`, so status flips (after either RPC succeeds) update the screen instantly without polling:
+
 ```js
 supabase
   .channel(`order-${orderId}`)
-  .on('postgres_changes',
-    { event: 'UPDATE', schema: 'public', table: 'orders', filter: `id=eq.${orderId}` },
-    (payload) => { /* update local state from payload.new */ })
+  .on(
+    "postgres_changes",
+    {
+      event: "UPDATE",
+      schema: "public",
+      table: "orders",
+      filter: `id=eq.${orderId}`,
+    },
+    (payload) => {
+      /* update local state from payload.new */
+    },
+  )
   .subscribe();
 ```
 
@@ -34,23 +44,28 @@ supabase
 
 ```js
 // Customer only — fetch raw OTP to read aloud
-const { data: otp } = await supabase.rpc('get_pickup_otp', { p_order_id: orderId });
+const { data: otp } = await supabase.rpc("get_pickup_otp", {
+  p_order_id: orderId,
+});
 
 // Agent only — submit code, flips accepted → picked_up
-const { data: ok } = await supabase.rpc('verify_pickup_otp', {
-  p_order_id: orderId, p_submitted_otp: enteredCode
+const { data: ok } = await supabase.rpc("verify_pickup_otp", {
+  p_order_id: orderId,
+  p_submitted_otp: enteredCode,
 });
 
 // Agent only — must succeed before seal check is possible. Requires status = 'picked_up'.
 // One photo per order — a second call fails with "already submitted".
-const { data: ok } = await supabase.rpc('submit_delivery_photo', {
-  p_order_id: orderId, p_photo_url: uploadedUrl
+const { data: ok } = await supabase.rpc("submit_delivery_photo", {
+  p_order_id: orderId,
+  p_photo_url: uploadedUrl,
 });
 
 // Customer only — 'intact' or 'broken'. Fails if no delivery_photos row exists yet.
 // Flips picked_up → delivered. If 'broken', auto-inserts an open complaint.
-const { data: ok } = await supabase.rpc('verify_delivery_seal', {
-  p_order_id: orderId, p_seal_status: 'intact' // or 'broken'
+const { data: ok } = await supabase.rpc("verify_delivery_seal", {
+  p_order_id: orderId,
+  p_seal_status: "intact", // or 'broken'
 });
 ```
 
@@ -82,12 +97,12 @@ All four RPCs independently re-check the caller's identity (`auth.uid()`) and th
 
 ## Storage buckets
 
-| Bucket | Public? | Folder convention | Who can upload | Who can view |
-|---|---|---|---|---|
-| `item-photos` | Yes | `{uploader_uid}/...` | Owner only, own folder | Anyone |
-| `agent-documents` | No | `{owner_uid}/...` | Owner only, own folder | Owner only |
-| `avatars` (new) | Yes | `{owner_uid}/...` | Owner only, own folder (insert + update/replace) | Anyone |
-| `delivery-photos` (new) | No | `{order_id}/...` | Only the order's `accepted_agent_id`, only while `status = 'picked_up'` | Order participants + `is_admin_user()` |
+| Bucket                  | Public? | Folder convention    | Who can upload                                                          | Who can view                           |
+| ----------------------- | ------- | -------------------- | ----------------------------------------------------------------------- | -------------------------------------- |
+| `item-photos`           | Yes     | `{uploader_uid}/...` | Owner only, own folder                                                  | Anyone                                 |
+| `agent-documents`       | No      | `{owner_uid}/...`    | Owner only, own folder                                                  | Owner only                             |
+| `avatars` (new)         | Yes     | `{owner_uid}/...`    | Owner only, own folder (insert + update/replace)                        | Anyone                                 |
+| `delivery-photos` (new) | No      | `{order_id}/...`     | Only the order's `accepted_agent_id`, only while `status = 'picked_up'` | Order participants + `is_admin_user()` |
 
 ---
 
@@ -104,6 +119,7 @@ All four RPCs independently re-check the caller's identity (`auth.uid()`) and th
 ## Housekeeping note
 
 Testing this session left some real rows in the live database (not a separate test project):
+
 - Orders `25a1bc0a-0311-4e3a-8cbd-7d4f33f2e64e` and `2d10c569-b19b-4cb4-9f8e-b496949280df` are now `delivered`, with real `delivery_verifications`, `delivery_photos`, and (on the first one) `complaints` rows attached.
 - One orphaned `avatars/65a841aa-df90-45c9-a2b6-a7c1a787b24e/profile.jpg` storage object with no real file behind it — harmless, delete via the Storage tab in the dashboard if it bothers you.
 

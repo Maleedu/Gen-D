@@ -34,7 +34,7 @@ const PERISHABLE_CATEGORY = 'Food';
 const SPEED_OPTIONS: { value: DeliverySpeed; label: string; color: string }[] = [
   { value: 'standard', label: 'Standard', color: NEUTRAL },
   { value: 'express', label: 'Express', color: AMBER },
-  { value: 'super_fast', label: 'Super fast', color: RED },
+  { value: 'super_fast', label: 'Priority', color: RED },
 ];
 
 const PARCEL_SIZES: { value: ParcelSize; label: string }[] = [
@@ -89,7 +89,7 @@ export default function PostItemScreen() {
 
   const isPerishable = category === PERISHABLE_CATEGORY;
 
-  // Perishable items are locked to Super fast (matches the DB check
+  // Perishable items are locked to Priority (matches the DB check
   // constraint from 15_perishable_super_fast_only.sql). Derived at render
   // time rather than synced into deliverySpeed via an effect, so the
   // disabled state and the effective value can never disagree for a frame.
@@ -241,7 +241,7 @@ export default function PostItemScreen() {
         photoUrls = [publicUrlData.publicUrl];
       }
 
-      const { data: inserted, error: insertError } = await supabase.from('orders').insert({
+      const { error: insertError } = await supabase.from('orders').insert({
         customer_id: userId,
         item_description: description.trim(),
         item_category: category,
@@ -260,14 +260,17 @@ export default function PostItemScreen() {
         is_perishable: isPerishable,
         photo_urls: photoUrls,
         legal_attestation_confirmed: legalConfirmed,
-      }).select('id').single();
+      });
 
       if (insertError) {
         throw new Error(insertError.message);
       }
 
       Alert.alert('Posted', 'Your parcel is live on the Wall.');
-      router.replace({ pathname: '/order/[id]', params: { id: inserted.id } });
+      // My Orders, not the Wall — Wall is Driver-mode-only content now (see
+      // the customer-driver mode handover doc, section 8). My Orders
+      // re-queries by customer_id, so the new row's id isn't needed here.
+      router.replace('/my-orders');
     } catch (err) {
       Alert.alert('Could not post item', err instanceof Error ? err.message : String(err));
     } finally {
@@ -368,7 +371,7 @@ export default function PostItemScreen() {
         </View>
         {isPerishable && (
           <Text style={[styles.note, { color: c.muted }]}>
-            Perishable ({PERISHABLE_CATEGORY}) items must ship Super fast.
+            Perishable ({PERISHABLE_CATEGORY}) items must ship Priority.
           </Text>
         )}
 
