@@ -104,10 +104,15 @@ export default function MyOrdersScreen() {
       router.replace('/login');
       return;
     }
+    // Customer mode ("View My Orders"): orders this person posted.
+    // Agent mode ("View My Deliveries"): orders this person was accepted to
+    // deliver — a different column entirely, not just a different filter
+    // value on the same one.
+    const filterColumn = mode === 'driver' ? 'accepted_agent_id' : 'customer_id';
     const { data, error } = await supabase
       .from('orders')
       .select('id, item_description, status, pricing_mode, price_paise, created_at')
-      .eq('customer_id', user.id)
+      .eq(filterColumn, user.id)
       .order('created_at', { ascending: false });
     if (error) {
       setLoadError(error.message);
@@ -128,7 +133,7 @@ export default function MyOrdersScreen() {
     } else {
       setBidCounts({});
     }
-  }, []);
+  }, [mode]);
 
   useEffect(() => {
     let ignore = false;
@@ -308,7 +313,7 @@ export default function MyOrdersScreen() {
     <SafeAreaView style={[styles.container, { backgroundColor: c.bg }]} edges={['top', 'left', 'right']}>
       <BackButton />
       <View style={styles.header}>
-        <Text style={[styles.headerTitle, { color: c.text }]}>My Orders</Text>
+        <Text style={[styles.headerTitle, { color: c.text }]}>{mode === 'driver' ? 'My Deliveries' : 'My Orders'}</Text>
       </View>
       <FlatList
         data={orders ?? []}
