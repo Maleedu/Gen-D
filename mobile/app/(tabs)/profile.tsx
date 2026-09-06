@@ -29,7 +29,7 @@ type Palette = {
 // shows only identity/contact info and logout, no gamification stats.
 export default function CustomerProfileScreen() {
   const isDark = useColorScheme() === 'dark';
-  const { mode, setMode } = useViewMode();
+  const { mode } = useViewMode();
   const c: Palette = {
     bg: isDark ? '#000000' : '#ffffff',
     text: isDark ? '#ffffff' : '#0f1720',
@@ -93,9 +93,6 @@ export default function CustomerProfileScreen() {
       Alert.alert("Couldn't log out", error.message);
       return;
     }
-    // Clears the locally cached mode so the next login starts fresh in
-    // Customer mode, rather than inheriting this session's Driver mode.
-    setMode('customer');
     router.replace('/login');
   }
 
