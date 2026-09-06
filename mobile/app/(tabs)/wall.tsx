@@ -14,6 +14,8 @@ import {
 } from '@expo-google-fonts/space-grotesk';
 import { supabase } from '../../lib/supabase';
 import { geocodeAddressOrThrow, getCurrentLocationOrThrow, LocationPermissionDeniedError } from '../../lib/location';
+import { EXPLAINER_BANNER_KEYS, useExplainerBanner } from '../../lib/explainer-banners';
+import { ExplainerBanner } from '../../components/explainer-banner';
 
 const BLUE = '#1877F2';
 const RED = '#E41E3F';
@@ -204,6 +206,11 @@ export default function WallScreen() {
 
   const [bidDrafts, setBidDrafts] = useState<Record<string, string>>({});
   const [busyOrderId, setBusyOrderId] = useState<string | null>(null);
+  // Global — not per-order — flag: whether this agent has dismissed the
+  // bid-placement explainer. Lifted here (rather than inside OrderCard) so
+  // every auction order card on screen reads the same state; dismissing on
+  // any one card hides it on all the others immediately.
+  const agentBiddingBanner = useExplainerBanner(EXPLAINER_BANNER_KEYS.agentBidding);
   // This agent's own existing bid per order (order_id -> offer_paise). bids
   // has a unique(order_id, agent_id) constraint and handleBid upserts on
   // that same pair, so a second submission updates the one row rather than
@@ -211,11 +218,9 @@ export default function WallScreen() {
   // show "You bid ₹X" instead of just going silent after the alert closes.
   const [myBids, setMyBids] = useState<Record<string, number>>({});
   // Highest standing offer_paise per order, across every agent — not just
-  // this agent's own. Needed for the real ascending-auction floor
-  // (25_enforce_ascending_bid.sql enforces the same max(min_bid_paise,
-  // highest offer) rule server-side) and so the input can show the real
-  // current floor instead of the order's original minimum, which becomes
-  // misleading the moment anyone's bid clears it. Sourced from the
+  // this agent's own. There's no requirement to beat it (enforce_minimum_bid
+  // only checks a bid against the order's min_bid_paise floor), but it's
+  // still useful context to surface next to the bid input. Sourced from the
   // highest_bids_for_orders RPC, not a plain select — RLS on bids only
   // lets an agent see their own rows, by design.
   const [highestBids, setHighestBids] = useState<Record<string, number>>({});
@@ -243,9 +248,9 @@ export default function WallScreen() {
   }
 
   // Current highest offer per order, across every agent, via the
-  // highest_bids_for_orders RPC (see 25_enforce_ascending_bid.sql for why
-  // this can't be a plain select). Merges into existing state rather than
-  // replacing it wholesale, so a bid this agent just placed (see handleBid's
+  // highest_bids_for_orders RPC — RLS on bids only lets an agent see their
+  // own rows, so this can't be a plain select. Merges into existing state
+  // rather than replacing it wholesale, so a bid this agent just placed (see handleBid's
   // optimistic update) isn't briefly clobbered by a refresh for an order
   // that's since dropped out of the visible list.
   const fetchHighestBids = useCallback(async (orderIds: string[]) => {
@@ -401,15 +406,14 @@ export default function WallScreen() {
       return;
     }
     const offerPaise = Math.round(rupees * 100);
-    // Same rule the database now enforces (25_enforce_ascending_bid.sql):
-    // a bid must strictly exceed the higher of the order's minimum and the
-    // current highest standing offer — including this agent's own bid if
-    // they're already leading, so they can't quietly lower it.
-    const floorPaise = Math.max(order.min_bid_paise ?? 0, highestBids[order.id] ?? 0);
-    if (floorPaise > 0 && offerPaise <= floorPaise) {
+    // Same rule the database enforces (enforce_minimum_bid trigger): a bid
+    // just needs to clear the order's min_bid_paise floor. No requirement
+    // to beat any other agent's standing bid.
+    const minPaise = order.min_bid_paise ?? 0;
+    if (minPaise > 0 && offerPaise < minPaise) {
       Alert.alert(
         'Bid too low',
-        `This order's current floor is ${formatRupees(floorPaise)}. Enter an amount above that.`,
+        `Bid must be at least ${formatRupees(minPaise)} for this order.`,
       );
       return;
     }
@@ -423,6 +427,17 @@ export default function WallScreen() {
       );
     setBusyOrderId(null);
     if (error) {
+      // trg_enforce_bid_order_open (36_block_bids_on_closed_auctions.sql)
+      // fires when the order closed — got accepted or cancelled — between
+      // this card being fetched and the bid actually landing. Same "stale
+      // state on this screen, not a bid-specific rejection" recovery as
+      // my-orders.tsx's confirmSelectBid: friendly message, drop back to a
+      // fresh fetch instead of leaving the now-stale card up.
+      if (/already closed/i.test(error.message)) {
+        Alert.alert('This order is no longer available', 'It was closed to bidding — someone else may have been accepted.');
+        fetchOrders();
+        return;
+      }
       Alert.alert('Could not place bid', error.message);
       return;
     }
@@ -683,6 +698,7 @@ export default function WallScreen() {
             <OrderCard
               order={item}
               c={c}
+              isDark={isDark}
               fontsLoaded={fontsLoaded}
               busy={busyOrderId === item.id}
               bidValue={bidDrafts[item.id] ?? ''}
@@ -691,6 +707,7 @@ export default function WallScreen() {
               onBidChange={(v) => setBidDrafts((prev) => ({ ...prev, [item.id]: v }))}
               onAccept={handleAccept}
               onBid={handleBid}
+              biddingBanner={agentBiddingBanner}
             />
           )}
         />
@@ -743,10 +760,12 @@ function SkeletonCard({ c }: { c: Palette }) {
 }
 
 function OrderCard({
-  order, c, fontsLoaded, busy, bidValue, myBidPaise, highestBidPaise, onBidChange, onAccept, onBid,
+  order, c, isDark, fontsLoaded, busy, bidValue, myBidPaise, highestBidPaise, onBidChange, onAccept, onBid,
+  biddingBanner,
 }: {
   order: OrderWithDistance;
   c: Palette;
+  isDark: boolean;
   fontsLoaded: boolean;
   busy: boolean;
   bidValue: string;
@@ -755,13 +774,15 @@ function OrderCard({
   onBidChange: (v: string) => void;
   onAccept: (order: OrderWithDistance) => void;
   onBid: (order: OrderWithDistance) => void;
+  biddingBanner: { seen: boolean | null; dismiss: () => void };
 }) {
   const speedMeta = SPEED_META[order.delivery_speed];
   const photo = order.photo_urls?.[0];
-  // The real current floor a new bid has to clear — the order's minimum
-  // until anyone's bid clears it, then whatever the highest standing bid
-  // is (25_enforce_ascending_bid.sql enforces this same number server-side).
-  const bidFloorPaise = Math.max(order.min_bid_paise ?? 0, highestBidPaise ?? 0);
+  // The floor a new bid has to clear — just the order's minimum
+  // (enforce_minimum_bid trigger enforces this same number server-side).
+  // Not affected by other agents' bids; highestBidPaise below is shown as
+  // context only, not folded into the floor.
+  const bidFloorPaise = order.min_bid_paise ?? 0;
 
   return (
     <View style={[styles.card, { backgroundColor: c.card, borderColor: c.border }]}>
@@ -803,11 +824,21 @@ function OrderCard({
       {order.pricing_mode === 'auction' && (myBidPaise != null || highestBidPaise != null) && (
         <Text style={[styles.myBidNote, { color: c.muted }]}>
           {myBidPaise != null && highestBidPaise != null && myBidPaise >= highestBidPaise
-            ? `You bid ${formatRupees(myBidPaise)} — currently the highest · tap Update to raise`
+            ? `You bid ${formatRupees(myBidPaise)} — currently the highest bid`
             : myBidPaise != null
-              ? `You bid ${formatRupees(myBidPaise)} — outbid, current highest is ${formatRupees(highestBidPaise)}`
-              : `Current highest: ${formatRupees(highestBidPaise)} · your bid must exceed this`}
+              ? `You bid ${formatRupees(myBidPaise)} — current highest is ${formatRupees(highestBidPaise)}`
+              : `Current highest bid: ${formatRupees(highestBidPaise)}`}
         </Text>
+      )}
+
+      {order.pricing_mode === 'auction' && (
+        <ExplainerBanner
+          seen={biddingBanner.seen}
+          onDismiss={biddingBanner.dismiss}
+          title="Placing your bid"
+          body="Bid any amount at or above the order's minimum. The customer sees every bid and picks who they want — there's no rule forcing you to outbid anyone else."
+          isDark={isDark}
+        />
       )}
 
       <View style={[styles.actionRow, { borderTopColor: c.border }]}>
@@ -827,7 +858,7 @@ function OrderCard({
             <TextInput
               style={[styles.bidInput, { backgroundColor: c.inputBg, color: c.text }]}
               keyboardType="decimal-pad"
-              placeholder={bidFloorPaise > 0 ? `More than ₹${Math.round(bidFloorPaise / 100)}` : '₹ your bid'}
+              placeholder={bidFloorPaise > 0 ? `₹${Math.round(bidFloorPaise / 100)} or more` : '₹ your bid'}
               placeholderTextColor={c.muted}
               value={bidValue}
               onChangeText={onBidChange}
