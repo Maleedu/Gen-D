@@ -29,7 +29,7 @@ type Palette = {
 // shows only identity/contact info and logout, no gamification stats.
 export default function CustomerProfileScreen() {
   const isDark = useColorScheme() === 'dark';
-  const { setMode } = useViewMode();
+  const { mode, setMode } = useViewMode();
   const c: Palette = {
     bg: isDark ? '#000000' : '#ffffff',
     text: isDark ? '#ffffff' : '#0f1720',
@@ -151,7 +151,9 @@ export default function CustomerProfileScreen() {
           onPress={() => router.push('/my-orders')}
           style={({ pressed }) => [styles.secondaryButton, { borderColor: BLUE }, pressed && { opacity: 0.6 }]}
         >
-          <Text style={[styles.secondaryButtonText, { color: BLUE }]}>View My Orders</Text>
+          <Text style={[styles.secondaryButtonText, { color: BLUE }]}>
+            {mode === 'driver' ? 'View My Deliveries' : 'View My Orders'}
+          </Text>
         </Pressable>
 
         <Pressable

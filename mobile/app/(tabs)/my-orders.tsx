@@ -7,6 +7,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { supabase } from '../../lib/supabase';
 import { AgentAvatar } from '../../components/agent-avatar';
+import { useViewMode } from '../../lib/view-mode';
 
 const BLUE = '#1877F2';
 const AMBER = '#B7791F';
@@ -47,9 +48,9 @@ type Palette = {
 
 // Every status except `open`, whose label also depends on pricing_mode (see
 // statusMetaFor below) — `open` bidding orders read "Bids open" instead of
-// "Waiting for a driver".
+// "Waiting for an agent".
 const STATUS_META: Record<Exclude<OrderStatus, 'open'>, { label: string; color: string }> = {
-  accepted: { label: 'Driver on the way to pickup', color: BLUE },
+  accepted: { label: 'Agent on the way to pickup', color: BLUE },
   picked_up: { label: 'In transit', color: BLUE },
   delivered: { label: 'Delivered', color: GREEN },
   cancelled: { label: 'Cancelled', color: NEUTRAL },
@@ -57,7 +58,7 @@ const STATUS_META: Record<Exclude<OrderStatus, 'open'>, { label: string; color: 
 
 function statusMetaFor(order: MyOrder): { label: string; color: string } {
   if (order.status === 'open') {
-    return { label: order.pricing_mode === 'auction' ? 'Bids open' : 'Waiting for a driver', color: AMBER };
+    return { label: order.pricing_mode === 'auction' ? 'Bids open' : 'Waiting for an agent', color: AMBER };
   }
   return STATUS_META[order.status];
 }
@@ -69,6 +70,7 @@ function formatRupees(paise: number | null) {
 
 export default function MyOrdersScreen() {
   const isDark = useColorScheme() === 'dark';
+  const { mode } = useViewMode();
   const c: Palette = {
     bg: isDark ? '#000000' : '#ffffff',
     text: isDark ? '#ffffff' : '#0f1720',
@@ -234,6 +236,7 @@ export default function MyOrdersScreen() {
   if (loading) {
     return (
       <SafeAreaView style={[styles.container, { backgroundColor: c.bg }]}>
+        <BackButton />
         <View style={styles.centerFill}>
           <ActivityIndicator color={BLUE} />
         </View>
@@ -287,6 +290,7 @@ export default function MyOrdersScreen() {
 
   return (
     <SafeAreaView style={[styles.container, { backgroundColor: c.bg }]} edges={['top', 'left', 'right']}>
+      <BackButton />
       <View style={styles.header}>
         <Text style={[styles.headerTitle, { color: c.text }]}>My Orders</Text>
       </View>
@@ -298,7 +302,9 @@ export default function MyOrdersScreen() {
         ListEmptyComponent={
           <View style={styles.centerFill}>
             <Text style={{ color: c.muted, fontSize: 15 }}>
-              {loadError ?? "You haven't posted any parcels yet."}
+              {loadError ?? (mode === 'driver'
+                ? "You haven't delivered any parcels yet."
+                : "You haven't posted any parcels yet.")}
             </Text>
           </View>
         }
@@ -366,10 +372,22 @@ function BidRow({
   );
 }
 
+function BackButton() {
+  return (
+    <View style={styles.backRow}>
+      <Pressable onPress={() => router.replace('/')} hitSlop={8}>
+        <Text style={[styles.backText, { color: BLUE }]}>‹ Back</Text>
+      </Pressable>
+    </View>
+  );
+}
+
 const styles = StyleSheet.create({
   container: { flex: 1 },
   centerFill: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 32 },
   errorText: { fontSize: 15, textAlign: 'center', lineHeight: 21 },
+
+  backRow: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 20, paddingTop: 12, paddingBottom: 8 },
 
   header: { paddingHorizontal: 20, paddingTop: 12, paddingBottom: 8 },
   headerTitle: { fontSize: 26, fontWeight: '800', letterSpacing: -0.5 },

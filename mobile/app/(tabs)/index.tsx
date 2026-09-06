@@ -96,7 +96,7 @@ function ModeToggle({
   return (
     <View style={[styles.modeRow, { backgroundColor: c.row }]}>
       <ModePill label="Customer" active={mode === 'customer'} color={BLUE} onPress={() => onChange('customer')} c={c} />
-      <ModePill label="Driver" active={mode === 'driver'} color={AMBER} onPress={() => onChange('driver')} c={c} />
+      <ModePill label="Agent" active={mode === 'driver'} color={AMBER} onPress={() => onChange('driver')} c={c} />
     </View>
   );
 }

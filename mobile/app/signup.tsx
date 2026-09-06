@@ -27,8 +27,57 @@ export default function SignupScreen() {
   const [agreed, setAgreed] = useState(false);
   const [submitting, setSubmitting] = useState(false);
 
+  // True once the account is created and we're waiting on phone
+  // verification — swaps the whole screen into that view instead of
+  // navigating to a new route, same pattern as my-orders.tsx's bid-review
+  // view (see docs/phone-otp-login-handover.md).
+  const [showPhoneVerification, setShowPhoneVerification] = useState(false);
+  const [otpCode, setOtpCode] = useState('');
+
   function update<K extends keyof typeof form>(key: K, value: string) {
     setForm((f) => ({ ...f, [key]: value }));
+  }
+
+  function finishSignup() {
+    Alert.alert('Welcome to Gen-D', 'Your account has been created.');
+    router.replace('/login');
+  }
+
+  // Verifying the phone number as a Supabase Auth identity right after
+  // signup, so phone login works for this account from day one — existing
+  // accounts are not retroactively linked (out of scope, see handover doc).
+  async function requestPhoneVerification() {
+    setSubmitting(true);
+    const { error: phoneError } = await supabase.auth.updateUser({
+      phone: `+91${form.phone}`,
+    });
+    setSubmitting(false);
+    if (phoneError) {
+      // Phone linking failing doesn't block signup — the account already
+      // exists and works via email+password either way.
+      Alert.alert('Phone verification failed', phoneError.message, [
+        { text: 'Skip for now', onPress: finishSignup },
+        { text: 'Try again', onPress: requestPhoneVerification },
+      ]);
+      return;
+    }
+    setOtpCode('');
+    setShowPhoneVerification(true);
+  }
+
+  async function handleVerifyOtp() {
+    setSubmitting(true);
+    const { error: verifyError } = await supabase.auth.verifyOtp({
+      phone: `+91${form.phone}`,
+      token: otpCode,
+      type: 'phone_change',
+    });
+    setSubmitting(false);
+    if (verifyError) {
+      Alert.alert('Verification failed', verifyError.message);
+      return;
+    }
+    finishSignup();
   }
 
   async function handleSignup() {
@@ -41,7 +90,8 @@ export default function SignupScreen() {
       return;
     }
 
-        const { error } = await supabase.auth.signUp({
+    setSubmitting(true);
+    const { error } = await supabase.auth.signUp({
       email: form.email,
       password: form.password,
       options: {
@@ -64,8 +114,50 @@ export default function SignupScreen() {
       Alert.alert('Signup failed', error.message);
       return;
     }
-    Alert.alert('Welcome to Gen-D', 'Your account has been created.');
-    router.replace('/login');
+    await requestPhoneVerification();
+  }
+
+  if (showPhoneVerification) {
+    return (
+      <SafeAreaView style={{ flex: 1, backgroundColor: c.bg }}>
+        <KeyboardAvoidingView
+          style={styles.keyboardAvoider}
+          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        >
+          <ScrollView contentContainerStyle={styles.container}>
+            <Text style={[styles.logo, { color: c.text }]}>Verify your number</Text>
+            <Text style={[styles.verifyMessage, { color: c.muted }]}>
+              We sent a code to +91{form.phone}. Enter it below to verify your number.
+            </Text>
+
+            <Field
+              label="Verification code"
+              value={otpCode}
+              onChangeText={setOtpCode}
+              keyboardType="number-pad"
+              maxLength={6}
+              c={c}
+            />
+
+            <Pressable
+              style={({ pressed }) => [styles.button, pressed && { opacity: 0.85 }]}
+              onPress={handleVerifyOtp}
+              disabled={submitting}
+            >
+              <Text style={styles.buttonText}>{submitting ? 'Verifying…' : 'Verify'}</Text>
+            </Pressable>
+
+            <Pressable onPress={requestPhoneVerification} disabled={submitting}>
+              <Text style={[styles.link, { color: BLUE }]}>Resend code</Text>
+            </Pressable>
+
+            <Pressable onPress={finishSignup} disabled={submitting}>
+              <Text style={[styles.link, { color: c.muted }]}>Skip for now</Text>
+            </Pressable>
+          </ScrollView>
+        </KeyboardAvoidingView>
+      </SafeAreaView>
+    );
   }
 
   return (
@@ -80,7 +172,15 @@ export default function SignupScreen() {
           <Field label="First name" value={form.firstName} onChangeText={(v) => update('firstName', v)} c={c} />
           <Field label="Last name" value={form.lastName} onChangeText={(v) => update('lastName', v)} c={c} />
           <Field label="Date of birth" value={form.dob} onChangeText={(v) => update('dob', v)} placeholder="YYYY-MM-DD" c={c} />
-          <Field label="Phone number" value={form.phone} onChangeText={(v) => update('phone', v)} keyboardType="phone-pad" c={c} />
+          <Field
+            label="Phone number"
+            value={form.phone}
+            onChangeText={(v) => update('phone', v)}
+            keyboardType="phone-pad"
+            prefix="+91"
+            maxLength={10}
+            c={c}
+          />
           <Field label="Email" value={form.email} onChangeText={(v) => update('email', v)} keyboardType="email-address" autoCapitalize="none" c={c} />
           <Field label="Password" value={form.password} onChangeText={(v) => update('password', v)} secureTextEntry c={c} />
           <Field label="Retype password" value={form.retypePassword} onChangeText={(v) => update('retypePassword', v)} secureTextEntry c={c} />
@@ -120,23 +220,43 @@ export default function SignupScreen() {
 function Field(props: {
   label: string; value: string; onChangeText: (v: string) => void;
   placeholder?: string; secureTextEntry?: boolean;
-  keyboardType?: 'default' | 'email-address' | 'phone-pad';
+  keyboardType?: 'default' | 'email-address' | 'phone-pad' | 'number-pad';
   autoCapitalize?: 'none' | 'sentences';
+  prefix?: string;
+  maxLength?: number;
   c: { text: string; muted: string; inputBg: string };
 }) {
   return (
     <View style={styles.fieldWrapper}>
       <Text style={[styles.label, { color: props.c.muted }]}>{props.label}</Text>
-      <TextInput
-        style={[styles.input, { backgroundColor: props.c.inputBg, color: props.c.text }]}
-        value={props.value}
-        onChangeText={props.onChangeText}
-        placeholder={props.placeholder}
-        placeholderTextColor={props.c.muted}
-        secureTextEntry={props.secureTextEntry}
-        keyboardType={props.keyboardType}
-        autoCapitalize={props.autoCapitalize ?? 'sentences'}
-      />
+      {props.prefix ? (
+        <View style={[styles.inputRow, { backgroundColor: props.c.inputBg }]}>
+          <Text style={[styles.inputPrefix, { color: props.c.muted }]}>{props.prefix}</Text>
+          <TextInput
+            style={[styles.inputFlex, { color: props.c.text }]}
+            value={props.value}
+            onChangeText={props.onChangeText}
+            placeholder={props.placeholder}
+            placeholderTextColor={props.c.muted}
+            secureTextEntry={props.secureTextEntry}
+            keyboardType={props.keyboardType}
+            autoCapitalize={props.autoCapitalize ?? 'sentences'}
+            maxLength={props.maxLength}
+          />
+        </View>
+      ) : (
+        <TextInput
+          style={[styles.input, { backgroundColor: props.c.inputBg, color: props.c.text }]}
+          value={props.value}
+          onChangeText={props.onChangeText}
+          placeholder={props.placeholder}
+          placeholderTextColor={props.c.muted}
+          secureTextEntry={props.secureTextEntry}
+          keyboardType={props.keyboardType}
+          autoCapitalize={props.autoCapitalize ?? 'sentences'}
+          maxLength={props.maxLength}
+        />
+      )}
     </View>
   );
 }
@@ -145,11 +265,16 @@ const styles = StyleSheet.create({
   keyboardAvoider: { flex: 1 },
   container: { padding: 24, paddingBottom: 48 },
   logo: { fontSize: 26, fontWeight: '800', marginBottom: 24, textAlign: 'center' },
+  verifyMessage: { fontSize: 14, marginBottom: 24, textAlign: 'center' },
   fieldWrapper: { marginBottom: 14 },
   label: { fontSize: 13, marginBottom: 6 },
   input: { borderRadius: 12, padding: 14, fontSize: 16 },
+  inputRow: { flexDirection: 'row', alignItems: 'center', borderRadius: 12, paddingHorizontal: 14 },
+  inputPrefix: { fontSize: 16, marginRight: 6 },
+  inputFlex: { flex: 1, paddingVertical: 14, fontSize: 16 },
   switchRow: { flexDirection: 'row', alignItems: 'center', gap: 12, marginTop: 14, marginBottom: 4 },
   switchLabel: { flex: 1, fontSize: 14 },
   button: { backgroundColor: BLUE, borderRadius: 14, padding: 17, marginTop: 28, alignItems: 'center' },
   buttonText: { color: '#ffffff', fontSize: 16, fontWeight: '700' },
+  link: { textAlign: 'center', marginTop: 16, fontSize: 14, fontWeight: '600' },
 });
