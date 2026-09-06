@@ -162,7 +162,7 @@ export default function MyOrdersScreen() {
       .from('bids')
       .select('id, agent_id, offer_paise')
       .eq('order_id', orderId)
-      .order('offer_paise', { ascending: false });
+      .order('offer_paise', { ascending: true });
     if (error) {
       setBidsError(error.message);
       setBidsLoading(false);
