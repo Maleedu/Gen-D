@@ -1,0 +1,11 @@
+-- Backfill: this migration already exists live (applied via Supabase MCP as
+-- version 20260905045711 / "revoke_anon_from_pickup_verifications", tracked
+-- in supabase_migrations.schema_migrations) but was never saved to this
+-- folder until now. Statement below is copied verbatim from that table, not
+-- reconstructed from schema introspection.
+--
+-- 27_pickup_otp_verification.sql already revoked select/insert/update/delete
+-- on pickup_verifications from `authenticated` (the two RPCs are meant to be
+-- the only way in or out of this table), but never touched `anon` — this
+-- closes that gap for the anonymous role too.
+revoke all on pickup_verifications from anon;
