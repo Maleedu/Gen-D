@@ -9,6 +9,13 @@ import { supabase } from '../lib/supabase';
 
 const BLUE = '#1877F2';
 
+// Two-step, single-screen flow (same 'request' -> 'verify' pattern as
+// login.tsx's phone tab) instead of the earlier deep-link screen — Expo Go
+// can't register custom URL schemes, so gend://reset-password could never
+// open there, and won't until there's a proper native build. An emailed
+// 6-digit code sidesteps deep linking entirely.
+type Step = 'request' | 'verify';
+
 export default function ForgotPasswordScreen() {
   const isDark = useColorScheme() === 'dark';
   const c = {
@@ -18,26 +25,74 @@ export default function ForgotPasswordScreen() {
     inputBg: isDark ? '#111214' : '#f5f6f8',
   };
 
+  const [step, setStep] = useState<Step>('request');
   const [email, setEmail] = useState('');
   const [submitting, setSubmitting] = useState(false);
-  const [sent, setSent] = useState(false);
 
-  async function handleSendResetLink() {
+  const [code, setCode] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  // Once verifyOtp succeeds it can't be replayed — track that separately so
+  // a retry after a failed updateUser() (e.g. weak password) just retries
+  // updateUser() on the session that's already set, without resubmitting
+  // the one-time code.
+  const [otpVerified, setOtpVerified] = useState(false);
+
+  async function handleSendCode() {
     const trimmed = email.trim();
     if (!trimmed) {
       Alert.alert('Enter your email', 'Enter the email address for your account.');
       return;
     }
     setSubmitting(true);
-    const { error } = await supabase.auth.resetPasswordForEmail(trimmed, {
-      redirectTo: 'gend://reset-password',
-    });
+    const { error } = await supabase.auth.resetPasswordForEmail(trimmed);
     setSubmitting(false);
     if (error) {
-      Alert.alert('Could not send reset link', error.message);
+      Alert.alert('Could not send code', error.message);
       return;
     }
-    setSent(true);
+    setCode('');
+    setOtpVerified(false);
+    setStep('verify');
+  }
+
+  async function handleVerifyAndReset() {
+    if (newPassword.length < 6) {
+      Alert.alert('Password too short', 'Password must be at least 6 characters.');
+      return;
+    }
+    if (newPassword !== confirmPassword) {
+      Alert.alert("Passwords don't match", 'Make sure both passwords are the same.');
+      return;
+    }
+
+    setSubmitting(true);
+
+    if (!otpVerified) {
+      const { error: otpError } = await supabase.auth.verifyOtp({
+        email: email.trim(),
+        token: code,
+        type: 'recovery',
+      });
+      if (otpError) {
+        setSubmitting(false);
+        Alert.alert('Invalid code', otpError.message);
+        return;
+      }
+      setOtpVerified(true);
+    }
+
+    // verifyOtp already signed the user in with a recovery session — this
+    // just changes the password on it.
+    const { error: updateError } = await supabase.auth.updateUser({ password: newPassword });
+    setSubmitting(false);
+
+    if (updateError) {
+      Alert.alert('Could not update password', updateError.message);
+      return;
+    }
+
+    router.replace('/');
   }
 
   return (
@@ -55,25 +110,11 @@ export default function ForgotPasswordScreen() {
         <ScrollView contentContainerStyle={styles.container}>
           <Text style={[styles.logo, { color: c.text }]}>Gen-D</Text>
 
-          {sent ? (
-            <>
-              <Text style={[styles.title, { color: c.text }]}>Check your email</Text>
-              <Text style={[styles.note, { color: c.muted }]}>
-                We sent a password reset link to {email.trim()}. Open it on this device to set a new password.
-              </Text>
-
-              <Pressable
-                style={({ pressed }) => [styles.button, pressed && { opacity: 0.85 }]}
-                onPress={() => router.replace('/login')}
-              >
-                <Text style={styles.buttonText}>Back to login</Text>
-              </Pressable>
-            </>
-          ) : (
+          {step === 'request' ? (
             <>
               <Text style={[styles.title, { color: c.text }]}>Forgot password?</Text>
               <Text style={[styles.note, { color: c.muted }]}>
-                Enter your email and we&apos;ll send you a link to reset your password.
+                Enter your email and we&apos;ll send you a code to reset your password.
               </Text>
 
               <Text style={[styles.label, { color: c.muted }]}>Email</Text>
@@ -89,10 +130,63 @@ export default function ForgotPasswordScreen() {
 
               <Pressable
                 style={({ pressed }) => [styles.button, pressed && { opacity: 0.85 }]}
-                onPress={handleSendResetLink}
+                onPress={handleSendCode}
                 disabled={submitting}
               >
-                <Text style={styles.buttonText}>{submitting ? 'Sending…' : 'Send reset link'}</Text>
+                <Text style={styles.buttonText}>{submitting ? 'Sending…' : 'Send code'}</Text>
+              </Pressable>
+            </>
+          ) : (
+            <>
+              <Text style={[styles.note, { color: c.muted }]}>
+                We sent a code to {email.trim()}. Enter it below along with your new password.
+              </Text>
+
+              <Text style={[styles.label, { color: c.muted }]}>Verification code</Text>
+              <TextInput
+                style={[styles.input, { backgroundColor: c.inputBg, color: c.text }]}
+                keyboardType="number-pad"
+                maxLength={6}
+                value={code}
+                onChangeText={setCode}
+                placeholder="6-digit code"
+                placeholderTextColor={c.muted}
+              />
+
+              <Text style={[styles.label, { color: c.muted }]}>New password</Text>
+              <TextInput
+                style={[styles.input, { backgroundColor: c.inputBg, color: c.text }]}
+                secureTextEntry
+                value={newPassword}
+                onChangeText={setNewPassword}
+                placeholder="••••••••"
+                placeholderTextColor={c.muted}
+              />
+
+              <Text style={[styles.label, { color: c.muted }]}>Confirm password</Text>
+              <TextInput
+                style={[styles.input, { backgroundColor: c.inputBg, color: c.text }]}
+                secureTextEntry
+                value={confirmPassword}
+                onChangeText={setConfirmPassword}
+                placeholder="••••••••"
+                placeholderTextColor={c.muted}
+              />
+
+              <Pressable
+                style={({ pressed }) => [styles.button, pressed && { opacity: 0.85 }]}
+                onPress={handleVerifyAndReset}
+                disabled={submitting}
+              >
+                <Text style={styles.buttonText}>{submitting ? 'Saving…' : 'Reset password'}</Text>
+              </Pressable>
+
+              <Pressable onPress={handleSendCode} disabled={submitting}>
+                <Text style={[styles.link, { color: BLUE }]}>Resend code</Text>
+              </Pressable>
+
+              <Pressable onPress={() => setStep('request')} disabled={submitting}>
+                <Text style={[styles.link, { color: c.muted }]}>Edit email</Text>
               </Pressable>
             </>
           )}
@@ -115,4 +209,5 @@ const styles = StyleSheet.create({
   input: { borderRadius: 12, padding: 14, fontSize: 16 },
   button: { backgroundColor: BLUE, borderRadius: 14, padding: 17, marginTop: 32, alignItems: 'center' },
   buttonText: { color: '#ffffff', fontSize: 16, fontWeight: '700' },
+  link: { textAlign: 'center', marginTop: 22, fontSize: 14, fontWeight: '600' },
 });
