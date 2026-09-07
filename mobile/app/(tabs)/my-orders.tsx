@@ -7,7 +7,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { supabase } from '../../lib/supabase';
 import { AgentAvatar } from '../../components/agent-avatar';
-import { useViewMode } from '../../lib/view-mode';
+import { useViewMode, type ViewMode } from '../../lib/view-mode';
 import { EXPLAINER_BANNER_KEYS, useExplainerBanner } from '../../lib/explainer-banners';
 import { ExplainerBanner } from '../../components/explainer-banner';
 
@@ -50,7 +50,10 @@ type Palette = {
 
 // Every status except `open`, whose label also depends on pricing_mode (see
 // statusMetaFor below) — `open` bidding orders read "Bids open" instead of
-// "Waiting for an agent".
+// "Waiting for an agent". `accepted`'s label is customer-only here too — an
+// agent viewing their own delivery gets a mode-specific override below
+// rather than reading "Agent on the way to pickup" about themselves in third
+// person. The other three statuses are neutral state labels either way.
 const STATUS_META: Record<Exclude<OrderStatus, 'open'>, { label: string; color: string }> = {
   accepted: { label: 'Agent on the way to pickup', color: BLUE },
   picked_up: { label: 'In transit', color: BLUE },
@@ -58,9 +61,12 @@ const STATUS_META: Record<Exclude<OrderStatus, 'open'>, { label: string; color: 
   cancelled: { label: 'Cancelled', color: NEUTRAL },
 };
 
-function statusMetaFor(order: MyOrder): { label: string; color: string } {
+function statusMetaFor(order: MyOrder, mode: ViewMode): { label: string; color: string } {
   if (order.status === 'open') {
     return { label: order.pricing_mode === 'auction' ? 'Bids open' : 'Waiting for an agent', color: AMBER };
+  }
+  if (order.status === 'accepted' && mode === 'driver') {
+    return { label: 'Heading to pickup', color: STATUS_META.accepted.color };
   }
   return STATUS_META[order.status];
 }
@@ -330,7 +336,7 @@ export default function MyOrdersScreen() {
           </View>
         }
         renderItem={({ item }) => (
-          <OrderRow order={item} bidCount={bidCounts[item.id]} onPress={() => handleOrderPress(item)} c={c} />
+          <OrderRow order={item} bidCount={bidCounts[item.id]} onPress={() => handleOrderPress(item)} c={c} mode={mode} />
         )}
       />
     </SafeAreaView>
@@ -338,9 +344,9 @@ export default function MyOrdersScreen() {
 }
 
 function OrderRow({
-  order, bidCount, onPress, c,
-}: { order: MyOrder; bidCount: number | undefined; onPress: () => void; c: Palette }) {
-  const meta = statusMetaFor(order);
+  order, bidCount, onPress, c, mode,
+}: { order: MyOrder; bidCount: number | undefined; onPress: () => void; c: Palette; mode: ViewMode }) {
+  const meta = statusMetaFor(order, mode);
   const isOpenBidding = order.status === 'open' && order.pricing_mode === 'auction';
   const rightText = isOpenBidding
     ? `${bidCount ?? 0} bid${(bidCount ?? 0) === 1 ? '' : 's'}`
