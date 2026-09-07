@@ -87,6 +87,20 @@ const STATUS_META: Record<OrderStatus, { label: string; color: string }> = {
   cancelled: { label: 'Cancelled', color: NEUTRAL },
 };
 
+// `accepted`'s label above is customer-only — an agent viewing their own
+// delivery gets a role-specific override here rather than reading "Agent
+// assigned" about themselves in third person. The other four statuses are
+// neutral state labels either way; `open` in particular is never actually
+// shown to the agent role, since accepted_agent_id (what makes role
+// 'agent') is only ever set atomically together with the accepted-status
+// transition.
+function statusMetaFor(status: OrderStatus, role: Role): { label: string; color: string } {
+  if (status === 'accepted' && role === 'agent') {
+    return { label: 'Assigned to you', color: STATUS_META.accepted.color };
+  }
+  return STATUS_META[status];
+}
+
 const VEHICLE_LABEL: Record<VehicleType, string> = {
   bike: '🏍️ Bike', car: '🚗 Car', bus: '🚌 Bus', other: '📦 Other vehicle', none: '',
 };
@@ -557,7 +571,7 @@ export default function OrderTrackingScreen() {
   }
 
   const speedMeta = SPEED_META[order.delivery_speed];
-  const statusMeta = STATUS_META[order.status];
+  const statusMeta = statusMetaFor(order.status, role);
   const priceLabel =
     order.pricing_mode === 'fixed' ? formatRupees(order.price_paise) : `${formatRupees(order.min_bid_paise)}+ (auction)`;
 
