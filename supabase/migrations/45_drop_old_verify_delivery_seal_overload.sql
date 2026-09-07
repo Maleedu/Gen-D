@@ -1,0 +1,16 @@
+-- Backfill: this migration already exists live (applied via Supabase MCP as
+-- version 20260907143326 / "drop_old_verify_delivery_seal_overload",
+-- tracked in supabase_migrations.schema_migrations) but was never saved to
+-- this folder until now. Statement below is copied verbatim from that
+-- table, not reconstructed from schema introspection.
+--
+-- 43_add_delivery_otp_verification.sql's CREATE OR REPLACE FUNCTION
+-- verify_delivery_seal(p_order_id, p_seal_status, p_submitted_otp) has a
+-- different parameter list than 28_delivery_seal_verification.sql's
+-- verify_delivery_seal(p_order_id, p_seal_status) — Postgres treats that as
+-- a new overload, not a replacement, so the old 2-arg version (no OTP check
+-- at all) stayed live and callable alongside the new one until this ran.
+-- Found and fixed same-day, while reconciling the mobile client against the
+-- new signature. After this, public.verify_delivery_seal has exactly one
+-- overload: the 3-arg version.
+DROP FUNCTION IF EXISTS public.verify_delivery_seal(uuid, text);

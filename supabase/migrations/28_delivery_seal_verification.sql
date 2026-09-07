@@ -6,6 +6,14 @@
 -- (applied via the Supabase MCP tool's apply_migration, not the dashboard),
 -- just never saved as files here — the names/order below match that history
 -- exactly, the SQL is reconstructed from the live objects it left behind.
+--
+-- SUPERSEDED as of 43_add_delivery_otp_verification.sql: the 2-arg
+-- verify_delivery_seal(p_order_id, p_seal_status) below is no longer live —
+-- see 43 (adds a required 3rd p_submitted_otp arg) and 45 (drops this
+-- overload, which briefly stayed live alongside 43's new one — CREATE OR
+-- REPLACE with a different parameter list creates a new overload in
+-- Postgres, it doesn't replace the old one). Don't call this 2-arg
+-- signature from the client; it no longer exists.
 create table delivery_verifications (
   id uuid primary key default gen_random_uuid(),
   order_id uuid not null unique references orders(id) on delete cascade,

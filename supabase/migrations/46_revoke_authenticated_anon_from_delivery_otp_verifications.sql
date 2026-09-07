@@ -1,0 +1,26 @@
+-- Backfill: this migration already exists live (applied via Supabase MCP as
+-- version 20260907144211 /
+-- "revoke_authenticated_anon_from_delivery_otp_verifications", tracked in
+-- supabase_migrations.schema_migrations) but was never saved to this folder
+-- until now. Statement below is copied verbatim from that table, not
+-- reconstructed from schema introspection.
+--
+-- Closes the gap flagged in 43_add_delivery_otp_verification.sql's header:
+-- unlike pickup_verifications — where 27_pickup_otp_verification.sql
+-- revokes from `authenticated` inline and 38_revoke_anon_from_pickup_verifications.sql
+-- later closes the same gap for `anon` — delivery_otp_verifications never
+-- had its table-level grants revoked at all. That gap turned out to be
+-- exploitable, not just a defense-in-depth deviation: this table's RLS
+-- policy (43) permits SELECT to *both* order participants (customer and
+-- agent), same as pickup_verifications's policy does. For pickup, that's
+-- fine — get_pickup_otp is customer-only and the customer is also who the
+-- SELECT policy would let read the row directly, so direct table access
+-- doesn't grant anything the RPC didn't already. For delivery it's
+-- reversed: get_delivery_otp is agent-only, but the SELECT policy still
+-- covers the customer too — so with table grants still open, the customer
+-- could `select otp_code from delivery_otp_verifications` directly and see
+-- the delivery code before the agent ever reveals it, bypassing
+-- get_delivery_otp's role check entirely. Verified after this ran: both
+-- RPCs still work (SECURITY DEFINER bypasses grants) and a direct customer
+-- table query now gets "permission denied", same as pickup_verifications.
+revoke all on public.delivery_otp_verifications from authenticated, anon;
