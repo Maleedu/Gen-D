@@ -8,6 +8,9 @@ import { router } from 'expo-router';
 import { supabase } from '../lib/supabase';
 
 const BLUE = '#1877F2';
+const RED = '#E41E3F';
+
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 type LoginTab = 'email' | 'phone';
 
@@ -25,6 +28,9 @@ export default function LoginScreen() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [submitting, setSubmitting] = useState(false);
+  // Field names currently showing a red border — cleared the moment that
+  // field is edited again, not left stuck on until the next submit attempt.
+  const [fieldErrors, setFieldErrors] = useState<Set<string>>(new Set());
 
   // Phone tab: 'request' shows the number entry + "Send code", 'verify'
   // shows the OTP entry once a code has been sent — swapped inline on this
@@ -34,13 +40,32 @@ export default function LoginScreen() {
   const [phoneStep, setPhoneStep] = useState<'request' | 'verify'>('request');
   const [phoneOtp, setPhoneOtp] = useState('');
 
+  function clearFieldError(name: string) {
+    setFieldErrors((prev) => {
+      if (!prev.has(name)) return prev;
+      const next = new Set(prev);
+      next.delete(name);
+      return next;
+    });
+  }
+
   function switchTab(nextTab: LoginTab) {
     setTab(nextTab);
     setPhoneStep('request');
     setPhoneOtp('');
+    setFieldErrors(new Set());
   }
 
   async function handleLogin() {
+    const errors = new Set<string>();
+    if (!email.trim() || !EMAIL_RE.test(email.trim())) errors.add('email');
+    if (!password) errors.add('password');
+    if (errors.size > 0) {
+      setFieldErrors(errors);
+      Alert.alert('Missing information', 'Enter a valid email and password to continue.');
+      return;
+    }
+
     setSubmitting(true);
     const { error } = await supabase.auth.signInWithPassword({ email, password });
     setSubmitting(false);
@@ -53,6 +78,7 @@ export default function LoginScreen() {
 
   async function handleSendCode() {
     if (phoneNumber.length !== 10) {
+      setFieldErrors(new Set(['phoneNumber']));
       Alert.alert('Enter a valid phone number', 'Phone number must be 10 digits.');
       return;
     }
@@ -86,6 +112,11 @@ export default function LoginScreen() {
   }
 
   async function handleVerifyPhoneOtp() {
+    if (!phoneOtp.trim()) {
+      setFieldErrors(new Set(['phoneOtp']));
+      Alert.alert('Enter the code', 'Enter the verification code sent to your phone.');
+      return;
+    }
     setSubmitting(true);
     const { error } = await supabase.auth.verifyOtp({
       phone: `+91${phoneNumber}`,
@@ -124,21 +155,29 @@ export default function LoginScreen() {
             <>
               <Text style={[styles.label, { color: c.muted }]}>Email</Text>
               <TextInput
-                style={[styles.input, { backgroundColor: c.inputBg, color: c.text }]}
+                style={[
+                  styles.input,
+                  { backgroundColor: c.inputBg, color: c.text },
+                  fieldErrors.has('email') && styles.inputError,
+                ]}
                 autoCapitalize="none"
                 keyboardType="email-address"
                 value={email}
-                onChangeText={setEmail}
+                onChangeText={(v) => { setEmail(v); clearFieldError('email'); }}
                 placeholder="you@example.com"
                 placeholderTextColor={c.muted}
               />
 
               <Text style={[styles.label, { color: c.muted }]}>Password</Text>
               <TextInput
-                style={[styles.input, { backgroundColor: c.inputBg, color: c.text }]}
+                style={[
+                  styles.input,
+                  { backgroundColor: c.inputBg, color: c.text },
+                  fieldErrors.has('password') && styles.inputError,
+                ]}
                 secureTextEntry
                 value={password}
-                onChangeText={setPassword}
+                onChangeText={(v) => { setPassword(v); clearFieldError('password'); }}
                 placeholder="••••••••"
                 placeholderTextColor={c.muted}
               />
@@ -162,14 +201,20 @@ export default function LoginScreen() {
           ) : phoneStep === 'request' ? (
             <>
               <Text style={[styles.label, { color: c.muted }]}>Phone number</Text>
-              <View style={[styles.inputRow, { backgroundColor: c.inputBg }]}>
+              <View
+                style={[
+                  styles.inputRow,
+                  { backgroundColor: c.inputBg },
+                  fieldErrors.has('phoneNumber') && styles.inputError,
+                ]}
+              >
                 <Text style={[styles.inputPrefix, { color: c.muted }]}>+91</Text>
                 <TextInput
                   style={[styles.inputFlex, { color: c.text }]}
                   keyboardType="phone-pad"
                   maxLength={10}
                   value={phoneNumber}
-                  onChangeText={setPhoneNumber}
+                  onChangeText={(v) => { setPhoneNumber(v); clearFieldError('phoneNumber'); }}
                   placeholder="10-digit number"
                   placeholderTextColor={c.muted}
                 />
@@ -195,11 +240,15 @@ export default function LoginScreen() {
 
               <Text style={[styles.label, { color: c.muted }]}>Verification code</Text>
               <TextInput
-                style={[styles.input, { backgroundColor: c.inputBg, color: c.text }]}
+                style={[
+                  styles.input,
+                  { backgroundColor: c.inputBg, color: c.text },
+                  fieldErrors.has('phoneOtp') && styles.inputError,
+                ]}
                 keyboardType="number-pad"
                 maxLength={6}
                 value={phoneOtp}
-                onChangeText={setPhoneOtp}
+                onChangeText={(v) => { setPhoneOtp(v); clearFieldError('phoneOtp'); }}
                 placeholder="6-digit code"
                 placeholderTextColor={c.muted}
               />
@@ -256,6 +305,7 @@ const styles = StyleSheet.create({
 
   label: { fontSize: 13, marginBottom: 6, marginTop: 16 },
   input: { borderRadius: 12, padding: 14, fontSize: 16 },
+  inputError: { borderWidth: 1.5, borderColor: RED },
   forgotLink: { textAlign: 'right', marginTop: 10, fontSize: 13, fontWeight: '600' },
   inputRow: { flexDirection: 'row', alignItems: 'center', borderRadius: 12, paddingHorizontal: 14 },
   inputPrefix: { fontSize: 16, marginRight: 6 },

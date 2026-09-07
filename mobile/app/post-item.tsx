@@ -89,6 +89,18 @@ export default function PostItemScreen() {
   const [legalConfirmed, setLegalConfirmed] = useState(false);
 
   const [submitting, setSubmitting] = useState(false);
+  // Field names currently showing a red border — cleared the moment that
+  // field is edited again, not left stuck on until the next submit attempt.
+  const [fieldErrors, setFieldErrors] = useState<Set<string>>(new Set());
+
+  function clearFieldError(name: string) {
+    setFieldErrors((prev) => {
+      if (!prev.has(name)) return prev;
+      const next = new Set(prev);
+      next.delete(name);
+      return next;
+    });
+  }
 
   const isPerishable = category === PERISHABLE_CATEGORY;
 
@@ -196,25 +208,38 @@ export default function PostItemScreen() {
 
   const priceLabel = pricingMode === 'fixed' ? 'Price (₹)' : 'Minimum bid (₹)';
 
-  const canSubmit =
-    !submitting &&
-    description.trim().length > 0 &&
-    category !== null &&
-    pointAAddress.trim().length > 0 &&
-    pointBAddress.trim().length > 0 &&
-    parseFloat(priceInput) > 0 &&
-    parseFloat(weightKg) > 0 &&
-    parcelSize !== null &&
-    legalConfirmed;
-
   async function handleSubmit() {
-    if (!userId || !category || !parcelSize) return;
+    if (!userId) return;
+
     const price = parseFloat(priceInput);
     const weight = parseFloat(weightKg);
-    if (!(price > 0) || !(weight > 0)) {
-      Alert.alert('Check your numbers', 'Price and weight both need to be greater than 0.');
+
+    const errors = new Set<string>();
+    if (!description.trim()) errors.add('description');
+    if (!pointAAddress.trim()) errors.add('pointAAddress');
+    if (!pointBAddress.trim()) errors.add('pointBAddress');
+    if (!(price > 0)) errors.add('priceInput');
+    if (!(weight > 0)) errors.add('weightKg');
+
+    // Category, parcel size, and the legal checkbox aren't TextInputs, so
+    // they can't get a red border — surface those by name in the Alert
+    // instead, alongside the highlighted fields.
+    const missingSelections: string[] = [];
+    if (!category) missingSelections.push('a category');
+    if (!parcelSize) missingSelections.push('a parcel size');
+    if (!legalConfirmed) missingSelections.push('the legal confirmation checkbox');
+
+    if (errors.size > 0 || missingSelections.length > 0) {
+      setFieldErrors(errors);
+      const parts = [
+        ...(errors.size > 0 ? ['the highlighted fields'] : []),
+        ...missingSelections,
+      ];
+      Alert.alert('Missing information', `Please fill in ${parts.join(', ')}.`);
       return;
     }
+    // Already validated above — these narrow the types for TS below.
+    if (!category || !parcelSize) return;
 
     setSubmitting(true);
     try {
@@ -298,9 +323,14 @@ export default function PostItemScreen() {
 
         <SectionLabel c={c}>Item description</SectionLabel>
         <TextInput
-          style={[styles.input, styles.multiline, { backgroundColor: c.inputBg, color: c.text }]}
+          style={[
+            styles.input,
+            styles.multiline,
+            { backgroundColor: c.inputBg, color: c.text },
+            fieldErrors.has('description') && styles.inputError,
+          ]}
           value={description}
-          onChangeText={setDescription}
+          onChangeText={(v) => { setDescription(v); clearFieldError('description'); }}
           placeholder="What are you sending?"
           placeholderTextColor={c.muted}
           multiline
@@ -333,11 +363,16 @@ export default function PostItemScreen() {
           Pickup address (Point A)
         </SectionLabel>
         <TextInput
-          style={[styles.input, { backgroundColor: c.inputBg, color: c.text }]}
+          style={[
+            styles.input,
+            { backgroundColor: c.inputBg, color: c.text },
+            fieldErrors.has('pointAAddress') && styles.inputError,
+          ]}
           value={pointAAddress}
           onChangeText={(text) => {
             setPointAAddress(text);
             setPointACoords(null);
+            clearFieldError('pointAAddress');
           }}
           placeholder="e.g. Indiranagar 100 Feet Road, Bengaluru"
           placeholderTextColor={c.muted}
@@ -348,9 +383,13 @@ export default function PostItemScreen() {
 
         <SectionLabel c={c}>Dropoff address (Point B)</SectionLabel>
         <TextInput
-          style={[styles.input, { backgroundColor: c.inputBg, color: c.text }]}
+          style={[
+            styles.input,
+            { backgroundColor: c.inputBg, color: c.text },
+            fieldErrors.has('pointBAddress') && styles.inputError,
+          ]}
           value={pointBAddress}
-          onChangeText={setPointBAddress}
+          onChangeText={(v) => { setPointBAddress(v); clearFieldError('pointBAddress'); }}
           placeholder="e.g. Koramangala 5th Block, Bengaluru"
           placeholderTextColor={c.muted}
         />
@@ -393,9 +432,13 @@ export default function PostItemScreen() {
           />
         )}
         <TextInput
-          style={[styles.input, { backgroundColor: c.inputBg, color: c.text, marginTop: 10 }]}
+          style={[
+            styles.input,
+            { backgroundColor: c.inputBg, color: c.text, marginTop: 10 },
+            fieldErrors.has('priceInput') && styles.inputError,
+          ]}
           value={priceInput}
-          onChangeText={setPriceInput}
+          onChangeText={(v) => { setPriceInput(v); clearFieldError('priceInput'); }}
           placeholder={priceLabel}
           placeholderTextColor={c.muted}
           keyboardType="decimal-pad"
@@ -403,9 +446,13 @@ export default function PostItemScreen() {
 
         <SectionLabel c={c}>Weight (kg)</SectionLabel>
         <TextInput
-          style={[styles.input, { backgroundColor: c.inputBg, color: c.text }]}
+          style={[
+            styles.input,
+            { backgroundColor: c.inputBg, color: c.text },
+            fieldErrors.has('weightKg') && styles.inputError,
+          ]}
           value={weightKg}
-          onChangeText={setWeightKg}
+          onChangeText={(v) => { setWeightKg(v); clearFieldError('weightKg'); }}
           placeholder="e.g. 1.5"
           placeholderTextColor={c.muted}
           keyboardType="decimal-pad"
@@ -463,10 +510,10 @@ export default function PostItemScreen() {
         <Pressable
           style={({ pressed }) => [
             styles.submitButton,
-            (!canSubmit || pressed) && { opacity: 0.6 },
+            (submitting || pressed) && { opacity: 0.6 },
           ]}
           onPress={handleSubmit}
-          disabled={!canSubmit}
+          disabled={submitting}
         >
           <Text style={styles.submitButtonText}>{submitting ? 'Posting…' : 'Post Order'}</Text>
         </Pressable>
@@ -524,6 +571,7 @@ const styles = StyleSheet.create({
   note: { fontSize: 12, marginTop: 6 },
 
   input: { borderRadius: 12, padding: 14, fontSize: 16 },
+  inputError: { borderWidth: 1.5, borderColor: RED },
   multiline: { minHeight: 80, textAlignVertical: 'top' },
 
   chipRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },

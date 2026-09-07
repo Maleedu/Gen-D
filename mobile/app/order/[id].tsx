@@ -145,6 +145,9 @@ export default function OrderTrackingScreen() {
   const [revealingOtp, setRevealingOtp] = useState(false);
   const [otpInput, setOtpInput] = useState('');
   const [verifyingOtp, setVerifyingOtp] = useState(false);
+  // Field names currently showing a red border — cleared the moment that
+  // field is edited again, not left stuck on until the next submit attempt.
+  const [fieldErrors, setFieldErrors] = useState<Set<string>>(new Set());
 
   // Whether a delivery_photos row exists for this order — gates the
   // customer's seal-check buttons (verify_delivery_seal hard-rejects until
@@ -379,6 +382,7 @@ export default function OrderTrackingScreen() {
     if (!order) return;
     const code = otpInput.trim();
     if (!code) {
+      setFieldErrors(new Set(['otpInput']));
       Alert.alert('Enter the code', 'Ask the customer to read out their pickup code.');
       return;
     }
@@ -643,9 +647,21 @@ export default function OrderTrackingScreen() {
               Ask the customer to read out their pickup code.
             </Text>
             <TextInput
-              style={[styles.input, { backgroundColor: c.inputBg, color: c.text }]}
+              style={[
+                styles.input,
+                { backgroundColor: c.inputBg, color: c.text },
+                fieldErrors.has('otpInput') && styles.inputError,
+              ]}
               value={otpInput}
-              onChangeText={setOtpInput}
+              onChangeText={(v) => {
+                setOtpInput(v);
+                setFieldErrors((prev) => {
+                  if (!prev.has('otpInput')) return prev;
+                  const next = new Set(prev);
+                  next.delete('otpInput');
+                  return next;
+                });
+              }}
               placeholder="6-digit code"
               placeholderTextColor={c.muted}
               keyboardType="number-pad"
@@ -887,6 +903,7 @@ const styles = StyleSheet.create({
   divider: { height: StyleSheet.hairlineWidth, marginVertical: 14 },
 
   input: { borderRadius: 12, padding: 14, fontSize: 18, letterSpacing: 2, textAlign: 'center', marginBottom: 12 },
+  inputError: { borderWidth: 1.5, borderColor: RED },
 
   primaryButton: { backgroundColor: BLUE, borderRadius: 12, paddingVertical: 14, alignItems: 'center' },
   primaryButtonText: { color: '#ffffff', fontSize: 15, fontWeight: '700' },

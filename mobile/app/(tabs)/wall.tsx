@@ -203,8 +203,15 @@ export default function WallScreen() {
   const [editingDestination, setEditingDestination] = useState(false);
   const [savingDestination, setSavingDestination] = useState(false);
   const [locatingDestination, setLocatingDestination] = useState(false);
+  // Red-border flag for the destination TextInput — set when "Set" is
+  // pressed with nothing typed, cleared as soon as the field is edited
+  // again (same pattern used on every other form in the app).
+  const [destinationError, setDestinationError] = useState(false);
 
   const [bidDrafts, setBidDrafts] = useState<Record<string, string>>({});
+  // Order ids whose bid TextInput should show a red border — a Set keyed by
+  // order id rather than field name, since bid inputs repeat per card.
+  const [bidErrors, setBidErrors] = useState<Set<string>>(new Set());
   const [busyOrderId, setBusyOrderId] = useState<string | null>(null);
   // Global — not per-order — flag: whether this agent has dismissed the
   // bid-placement explainer. Lifted here (rather than inside OrderCard) so
@@ -402,6 +409,7 @@ export default function WallScreen() {
     const raw = bidDrafts[order.id];
     const rupees = raw ? parseFloat(raw) : NaN;
     if (!raw || Number.isNaN(rupees) || rupees <= 0) {
+      setBidErrors((prev) => new Set(prev).add(order.id));
       Alert.alert('Enter a bid amount');
       return;
     }
@@ -411,6 +419,7 @@ export default function WallScreen() {
     // to beat any other agent's standing bid.
     const minPaise = order.min_bid_paise ?? 0;
     if (minPaise > 0 && offerPaise < minPaise) {
+      setBidErrors((prev) => new Set(prev).add(order.id));
       Alert.alert(
         'Bid too low',
         `Bid must be at least ${formatRupees(minPaise)} for this order.`,
@@ -443,6 +452,12 @@ export default function WallScreen() {
     }
     setMyBids((prev) => ({ ...prev, [order.id]: offerPaise }));
     setHighestBids((prev) => ({ ...prev, [order.id]: Math.max(prev[order.id] ?? 0, offerPaise) }));
+    setBidErrors((prev) => {
+      if (!prev.has(order.id)) return prev;
+      const next = new Set(prev);
+      next.delete(order.id);
+      return next;
+    });
     Alert.alert(isUpdate ? 'Bid updated' : 'Bid placed', `You bid ₹${raw} on this order.`);
   }
 
@@ -481,6 +496,7 @@ export default function WallScreen() {
   async function handleSetDestination() {
     const address = destinationInput.trim();
     if (!address) {
+      setDestinationError(true);
       Alert.alert('Enter a destination', "Type where you're headed, or use your current location.");
       return;
     }
@@ -600,6 +616,7 @@ export default function WallScreen() {
             <Pressable
               onPress={() => {
                 setDestinationInput(destination.address);
+                setDestinationError(false);
                 setEditingDestination(true);
               }}
               hitSlop={8}
@@ -616,9 +633,16 @@ export default function WallScreen() {
               {ON_MY_WAY_RADIUS_KM.super_fast} km).
             </Text>
             <TextInput
-              style={[styles.input, { backgroundColor: c.bg, color: c.text, marginTop: 10 }]}
+              style={[
+                styles.input,
+                { backgroundColor: c.bg, color: c.text, marginTop: 10 },
+                destinationError && styles.inputError,
+              ]}
               value={destinationInput}
-              onChangeText={setDestinationInput}
+              onChangeText={(v) => {
+                setDestinationInput(v);
+                setDestinationError(false);
+              }}
               placeholder="e.g. Whitefield, Bengaluru"
               placeholderTextColor={c.muted}
             />
@@ -702,9 +726,18 @@ export default function WallScreen() {
               fontsLoaded={fontsLoaded}
               busy={busyOrderId === item.id}
               bidValue={bidDrafts[item.id] ?? ''}
+              bidError={bidErrors.has(item.id)}
               myBidPaise={myBids[item.id] ?? null}
               highestBidPaise={highestBids[item.id] ?? null}
-              onBidChange={(v) => setBidDrafts((prev) => ({ ...prev, [item.id]: v }))}
+              onBidChange={(v) => {
+                setBidDrafts((prev) => ({ ...prev, [item.id]: v }));
+                setBidErrors((prev) => {
+                  if (!prev.has(item.id)) return prev;
+                  const next = new Set(prev);
+                  next.delete(item.id);
+                  return next;
+                });
+              }}
               onAccept={handleAccept}
               onBid={handleBid}
               biddingBanner={agentBiddingBanner}
@@ -760,7 +793,7 @@ function SkeletonCard({ c }: { c: Palette }) {
 }
 
 function OrderCard({
-  order, c, isDark, fontsLoaded, busy, bidValue, myBidPaise, highestBidPaise, onBidChange, onAccept, onBid,
+  order, c, isDark, fontsLoaded, busy, bidValue, bidError, myBidPaise, highestBidPaise, onBidChange, onAccept, onBid,
   biddingBanner,
 }: {
   order: OrderWithDistance;
@@ -769,6 +802,7 @@ function OrderCard({
   fontsLoaded: boolean;
   busy: boolean;
   bidValue: string;
+  bidError: boolean;
   myBidPaise: number | null;
   highestBidPaise: number | null;
   onBidChange: (v: string) => void;
@@ -856,7 +890,11 @@ function OrderCard({
         ) : (
           <>
             <TextInput
-              style={[styles.bidInput, { backgroundColor: c.inputBg, color: c.text }]}
+              style={[
+                styles.bidInput,
+                { backgroundColor: c.inputBg, color: c.text },
+                bidError && styles.inputError,
+              ]}
               keyboardType="decimal-pad"
               placeholder={bidFloorPaise > 0 ? `₹${Math.round(bidFloorPaise / 100)} or more` : '₹ your bid'}
               placeholderTextColor={c.muted}
@@ -911,6 +949,7 @@ const styles = StyleSheet.create({
   cancelDestinationText: { fontSize: 12, fontWeight: '600' },
 
   input: { borderRadius: 12, padding: 14, fontSize: 16 },
+  inputError: { borderWidth: 1.5, borderColor: RED },
   locateButtonText: { fontSize: 12, fontWeight: '700', color: BLUE },
   setDestinationButton: { backgroundColor: BLUE, borderRadius: 10, paddingHorizontal: 18, paddingVertical: 9 },
   setDestinationButtonText: { color: '#ffffff', fontSize: 13, fontWeight: '700' },

@@ -8,6 +8,16 @@ import { router } from 'expo-router';
 import { supabase } from '../lib/supabase';
 
 const BLUE = '#1877F2';
+const RED = '#E41E3F';
+
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+// Every field in `form` is required — this is what handleSignup checks for
+// emptiness on submit, driving which Field gets a red border.
+const REQUIRED_FORM_FIELDS = [
+  'firstName', 'lastName', 'dob', 'phone', 'email',
+  'password', 'retypePassword', 'address', 'landmark', 'occupation',
+] as const;
 
 export default function SignupScreen() {
   const isDark = useColorScheme() === 'dark';
@@ -26,6 +36,9 @@ export default function SignupScreen() {
   const [companyName, setCompanyName] = useState('');
   const [agreed, setAgreed] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  // Field names currently showing a red border — cleared the moment that
+  // field is edited again, not left stuck on until the next submit attempt.
+  const [fieldErrors, setFieldErrors] = useState<Set<string>>(new Set());
 
   // True once the account is created and we're waiting on phone
   // verification — swaps the whole screen into that view instead of
@@ -34,8 +47,18 @@ export default function SignupScreen() {
   const [showPhoneVerification, setShowPhoneVerification] = useState(false);
   const [otpCode, setOtpCode] = useState('');
 
+  function clearFieldError(name: string) {
+    setFieldErrors((prev) => {
+      if (!prev.has(name)) return prev;
+      const next = new Set(prev);
+      next.delete(name);
+      return next;
+    });
+  }
+
   function update<K extends keyof typeof form>(key: K, value: string) {
     setForm((f) => ({ ...f, [key]: value }));
+    clearFieldError(key);
   }
 
   function finishSignup() {
@@ -66,6 +89,11 @@ export default function SignupScreen() {
   }
 
   async function handleVerifyOtp() {
+    if (!otpCode.trim()) {
+      setFieldErrors(new Set(['otpCode']));
+      Alert.alert('Enter the code', 'Enter the verification code sent to your phone.');
+      return;
+    }
     setSubmitting(true);
     const { error: verifyError } = await supabase.auth.verifyOtp({
       phone: `+91${form.phone}`,
@@ -81,6 +109,18 @@ export default function SignupScreen() {
   }
 
   async function handleSignup() {
+    const errors = new Set<string>();
+    for (const key of REQUIRED_FORM_FIELDS) {
+      if (!form[key].trim()) errors.add(key);
+    }
+    if (form.email.trim() && !EMAIL_RE.test(form.email.trim())) errors.add('email');
+    if (isBusiness && !companyName.trim()) errors.add('companyName');
+    if (errors.size > 0) {
+      setFieldErrors(errors);
+      Alert.alert('Missing information', 'Fill in the highlighted fields to continue.');
+      return;
+    }
+
     if (form.password !== form.retypePassword) {
       Alert.alert('Passwords do not match');
       return;
@@ -133,10 +173,11 @@ export default function SignupScreen() {
             <Field
               label="Verification code"
               value={otpCode}
-              onChangeText={setOtpCode}
+              onChangeText={(v) => { setOtpCode(v); clearFieldError('otpCode'); }}
               keyboardType="number-pad"
               maxLength={6}
               c={c}
+              error={fieldErrors.has('otpCode')}
             />
 
             <Pressable
@@ -169,9 +210,9 @@ export default function SignupScreen() {
         <ScrollView contentContainerStyle={styles.container}>
           <Text style={[styles.logo, { color: c.text }]}>Join Gen-D</Text>
 
-          <Field label="First name" value={form.firstName} onChangeText={(v) => update('firstName', v)} c={c} />
-          <Field label="Last name" value={form.lastName} onChangeText={(v) => update('lastName', v)} c={c} />
-          <Field label="Date of birth" value={form.dob} onChangeText={(v) => update('dob', v)} placeholder="YYYY-MM-DD" c={c} />
+          <Field label="First name" value={form.firstName} onChangeText={(v) => update('firstName', v)} c={c} error={fieldErrors.has('firstName')} />
+          <Field label="Last name" value={form.lastName} onChangeText={(v) => update('lastName', v)} c={c} error={fieldErrors.has('lastName')} />
+          <Field label="Date of birth" value={form.dob} onChangeText={(v) => update('dob', v)} placeholder="YYYY-MM-DD" c={c} error={fieldErrors.has('dob')} />
           <Field
             label="Phone number"
             value={form.phone}
@@ -180,13 +221,14 @@ export default function SignupScreen() {
             prefix="+91"
             maxLength={10}
             c={c}
+            error={fieldErrors.has('phone')}
           />
-          <Field label="Email" value={form.email} onChangeText={(v) => update('email', v)} keyboardType="email-address" autoCapitalize="none" c={c} />
-          <Field label="Password" value={form.password} onChangeText={(v) => update('password', v)} secureTextEntry c={c} />
-          <Field label="Retype password" value={form.retypePassword} onChangeText={(v) => update('retypePassword', v)} secureTextEntry c={c} />
-          <Field label="Address" value={form.address} onChangeText={(v) => update('address', v)} c={c} />
-          <Field label="Landmark" value={form.landmark} onChangeText={(v) => update('landmark', v)} c={c} />
-          <Field label="Occupation" value={form.occupation} onChangeText={(v) => update('occupation', v)} c={c} />
+          <Field label="Email" value={form.email} onChangeText={(v) => update('email', v)} keyboardType="email-address" autoCapitalize="none" c={c} error={fieldErrors.has('email')} />
+          <Field label="Password" value={form.password} onChangeText={(v) => update('password', v)} secureTextEntry c={c} error={fieldErrors.has('password')} />
+          <Field label="Retype password" value={form.retypePassword} onChangeText={(v) => update('retypePassword', v)} secureTextEntry c={c} error={fieldErrors.has('retypePassword')} />
+          <Field label="Address" value={form.address} onChangeText={(v) => update('address', v)} c={c} error={fieldErrors.has('address')} />
+          <Field label="Landmark" value={form.landmark} onChangeText={(v) => update('landmark', v)} c={c} error={fieldErrors.has('landmark')} />
+          <Field label="Occupation" value={form.occupation} onChangeText={(v) => update('occupation', v)} c={c} error={fieldErrors.has('occupation')} />
 
           <View style={styles.switchRow}>
             <Switch value={isBusiness} onValueChange={setIsBusiness} trackColor={{ true: BLUE }} />
@@ -194,7 +236,13 @@ export default function SignupScreen() {
           </View>
 
           {isBusiness && (
-            <Field label="Company name" value={companyName} onChangeText={setCompanyName} c={c} />
+            <Field
+              label="Company name"
+              value={companyName}
+              onChangeText={(v) => { setCompanyName(v); clearFieldError('companyName'); }}
+              c={c}
+              error={fieldErrors.has('companyName')}
+            />
           )}
 
           <View style={styles.switchRow}>
@@ -225,12 +273,13 @@ function Field(props: {
   prefix?: string;
   maxLength?: number;
   c: { text: string; muted: string; inputBg: string };
+  error?: boolean;
 }) {
   return (
     <View style={styles.fieldWrapper}>
       <Text style={[styles.label, { color: props.c.muted }]}>{props.label}</Text>
       {props.prefix ? (
-        <View style={[styles.inputRow, { backgroundColor: props.c.inputBg }]}>
+        <View style={[styles.inputRow, { backgroundColor: props.c.inputBg }, props.error && styles.inputError]}>
           <Text style={[styles.inputPrefix, { color: props.c.muted }]}>{props.prefix}</Text>
           <TextInput
             style={[styles.inputFlex, { color: props.c.text }]}
@@ -246,7 +295,11 @@ function Field(props: {
         </View>
       ) : (
         <TextInput
-          style={[styles.input, { backgroundColor: props.c.inputBg, color: props.c.text }]}
+          style={[
+            styles.input,
+            { backgroundColor: props.c.inputBg, color: props.c.text },
+            props.error && styles.inputError,
+          ]}
           value={props.value}
           onChangeText={props.onChangeText}
           placeholder={props.placeholder}
@@ -269,6 +322,7 @@ const styles = StyleSheet.create({
   fieldWrapper: { marginBottom: 14 },
   label: { fontSize: 13, marginBottom: 6 },
   input: { borderRadius: 12, padding: 14, fontSize: 16 },
+  inputError: { borderWidth: 1.5, borderColor: RED },
   inputRow: { flexDirection: 'row', alignItems: 'center', borderRadius: 12, paddingHorizontal: 14 },
   inputPrefix: { fontSize: 16, marginRight: 6 },
   inputFlex: { flex: 1, paddingVertical: 14, fontSize: 16 },

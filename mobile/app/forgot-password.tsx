@@ -8,6 +8,9 @@ import { router } from 'expo-router';
 import { supabase } from '../lib/supabase';
 
 const BLUE = '#1877F2';
+const RED = '#E41E3F';
+
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 // Two-step, single-screen flow (same 'request' -> 'verify' pattern as
 // login.tsx's phone tab) instead of the earlier deep-link screen — Expo Go
@@ -37,10 +40,23 @@ export default function ForgotPasswordScreen() {
   // updateUser() on the session that's already set, without resubmitting
   // the one-time code.
   const [otpVerified, setOtpVerified] = useState(false);
+  // Field names currently showing a red border — cleared the moment that
+  // field is edited again, not left stuck on until the next submit attempt.
+  const [fieldErrors, setFieldErrors] = useState<Set<string>>(new Set());
+
+  function clearFieldError(name: string) {
+    setFieldErrors((prev) => {
+      if (!prev.has(name)) return prev;
+      const next = new Set(prev);
+      next.delete(name);
+      return next;
+    });
+  }
 
   async function handleSendCode() {
     const trimmed = email.trim();
-    if (!trimmed) {
+    if (!trimmed || !EMAIL_RE.test(trimmed)) {
+      setFieldErrors(new Set(['email']));
       Alert.alert('Enter your email', 'Enter the email address for your account.');
       return;
     }
@@ -53,15 +69,27 @@ export default function ForgotPasswordScreen() {
     }
     setCode('');
     setOtpVerified(false);
+    setFieldErrors(new Set());
     setStep('verify');
   }
 
   async function handleVerifyAndReset() {
+    const errors = new Set<string>();
+    if (!code.trim()) errors.add('code');
+    if (!newPassword) errors.add('newPassword');
+    if (!confirmPassword) errors.add('confirmPassword');
+    if (errors.size > 0) {
+      setFieldErrors(errors);
+      Alert.alert('Missing information', 'Fill in the highlighted fields to continue.');
+      return;
+    }
     if (newPassword.length < 6) {
+      setFieldErrors(new Set(['newPassword']));
       Alert.alert('Password too short', 'Password must be at least 6 characters.');
       return;
     }
     if (newPassword !== confirmPassword) {
+      setFieldErrors(new Set(['newPassword', 'confirmPassword']));
       Alert.alert("Passwords don't match", 'Make sure both passwords are the same.');
       return;
     }
@@ -119,11 +147,15 @@ export default function ForgotPasswordScreen() {
 
               <Text style={[styles.label, { color: c.muted }]}>Email</Text>
               <TextInput
-                style={[styles.input, { backgroundColor: c.inputBg, color: c.text }]}
+                style={[
+                  styles.input,
+                  { backgroundColor: c.inputBg, color: c.text },
+                  fieldErrors.has('email') && styles.inputError,
+                ]}
                 autoCapitalize="none"
                 keyboardType="email-address"
                 value={email}
-                onChangeText={setEmail}
+                onChangeText={(v) => { setEmail(v); clearFieldError('email'); }}
                 placeholder="you@example.com"
                 placeholderTextColor={c.muted}
               />
@@ -144,31 +176,43 @@ export default function ForgotPasswordScreen() {
 
               <Text style={[styles.label, { color: c.muted }]}>Verification code</Text>
               <TextInput
-                style={[styles.input, { backgroundColor: c.inputBg, color: c.text }]}
+                style={[
+                  styles.input,
+                  { backgroundColor: c.inputBg, color: c.text },
+                  fieldErrors.has('code') && styles.inputError,
+                ]}
                 keyboardType="number-pad"
                 maxLength={6}
                 value={code}
-                onChangeText={setCode}
+                onChangeText={(v) => { setCode(v); clearFieldError('code'); }}
                 placeholder="6-digit code"
                 placeholderTextColor={c.muted}
               />
 
               <Text style={[styles.label, { color: c.muted }]}>New password</Text>
               <TextInput
-                style={[styles.input, { backgroundColor: c.inputBg, color: c.text }]}
+                style={[
+                  styles.input,
+                  { backgroundColor: c.inputBg, color: c.text },
+                  fieldErrors.has('newPassword') && styles.inputError,
+                ]}
                 secureTextEntry
                 value={newPassword}
-                onChangeText={setNewPassword}
+                onChangeText={(v) => { setNewPassword(v); clearFieldError('newPassword'); }}
                 placeholder="••••••••"
                 placeholderTextColor={c.muted}
               />
 
               <Text style={[styles.label, { color: c.muted }]}>Confirm password</Text>
               <TextInput
-                style={[styles.input, { backgroundColor: c.inputBg, color: c.text }]}
+                style={[
+                  styles.input,
+                  { backgroundColor: c.inputBg, color: c.text },
+                  fieldErrors.has('confirmPassword') && styles.inputError,
+                ]}
                 secureTextEntry
                 value={confirmPassword}
-                onChangeText={setConfirmPassword}
+                onChangeText={(v) => { setConfirmPassword(v); clearFieldError('confirmPassword'); }}
                 placeholder="••••••••"
                 placeholderTextColor={c.muted}
               />
@@ -185,7 +229,10 @@ export default function ForgotPasswordScreen() {
                 <Text style={[styles.link, { color: BLUE }]}>Resend code</Text>
               </Pressable>
 
-              <Pressable onPress={() => setStep('request')} disabled={submitting}>
+              <Pressable
+                onPress={() => { setFieldErrors(new Set()); setStep('request'); }}
+                disabled={submitting}
+              >
                 <Text style={[styles.link, { color: c.muted }]}>Edit email</Text>
               </Pressable>
             </>
@@ -207,6 +254,7 @@ const styles = StyleSheet.create({
   note: { fontSize: 14, textAlign: 'center', marginBottom: 8, lineHeight: 20 },
   label: { fontSize: 13, marginBottom: 6, marginTop: 16 },
   input: { borderRadius: 12, padding: 14, fontSize: 16 },
+  inputError: { borderWidth: 1.5, borderColor: RED },
   button: { backgroundColor: BLUE, borderRadius: 14, padding: 17, marginTop: 32, alignItems: 'center' },
   buttonText: { color: '#ffffff', fontSize: 16, fontWeight: '700' },
   link: { textAlign: 'center', marginTop: 22, fontSize: 14, fontWeight: '600' },
