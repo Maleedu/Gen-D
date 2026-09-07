@@ -143,6 +143,10 @@ export default function LoginScreen() {
                 placeholderTextColor={c.muted}
               />
 
+              <Pressable onPress={() => router.push('/forgot-password')} hitSlop={4}>
+                <Text style={[styles.forgotLink, { color: BLUE }]}>Forgot password?</Text>
+              </Pressable>
+
               <Pressable
                 style={({ pressed }) => [styles.button, pressed && { opacity: 0.85 }]}
                 onPress={handleLogin}
@@ -252,6 +256,7 @@ const styles = StyleSheet.create({
 
   label: { fontSize: 13, marginBottom: 6, marginTop: 16 },
   input: { borderRadius: 12, padding: 14, fontSize: 16 },
+  forgotLink: { textAlign: 'right', marginTop: 10, fontSize: 13, fontWeight: '600' },
   inputRow: { flexDirection: 'row', alignItems: 'center', borderRadius: 12, paddingHorizontal: 14 },
   inputPrefix: { fontSize: 16, marginRight: 6 },
   inputFlex: { flex: 1, paddingVertical: 14, fontSize: 16 },
