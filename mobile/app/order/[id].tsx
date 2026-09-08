@@ -141,6 +141,11 @@ export default function OrderTrackingScreen() {
   // card for themselves (see the handover doc's per-role table).
   const [agentProfile, setAgentProfile] = useState<AgentProfile | null>(null);
 
+  // Auction orders only, customer-only, while status is still 'open' — a
+  // quick count/lowest-offer glance here; actually selecting a bid happens
+  // on my-orders.tsx (see bid-selection-accept-bid-handover.md), not here.
+  const [bidSummary, setBidSummary] = useState<{ count: number; lowestPaise: number | null } | null>(null);
+
   const [otp, setOtp] = useState<string | null>(null);
   const [revealingOtp, setRevealingOtp] = useState(false);
   const [otpInput, setOtpInput] = useState('');
@@ -236,6 +241,16 @@ export default function OrderTrackingScreen() {
     const { data } = await supabase.from('delivery_photos').select('order_id').eq('order_id', orderId).maybeSingle();
     setPhotoExists(!!data);
   }, [orderId]);
+
+  const loadBidSummary = useCallback(async (orderId: string) => {
+    const { data, error } = await supabase
+      .from('bids')
+      .select('offer_paise')
+      .eq('order_id', orderId);
+    if (error || !data) return;
+    const lowest = data.length > 0 ? Math.min(...data.map((b) => b.offer_paise)) : null;
+    setBidSummary({ count: data.length, lowestPaise: lowest });
+  }, []);
 
   // Both roles render it at the same size (styles.deliveryPhoto) — full-size
   // for the customer's seal decision, and the same for the agent to confirm
@@ -343,6 +358,7 @@ export default function OrderTrackingScreen() {
     setUserId(user.id);
 
     if (r === 'customer' && o.accepted_agent_id) loadAgentProfile(o.accepted_agent_id);
+    if (r === 'customer' && o.status === 'open' && o.pricing_mode === 'auction') loadBidSummary(orderId);
     if (o.status === 'picked_up') {
       checkPhotoExists();
       loadDeliveryPhoto(orderId);
@@ -351,7 +367,7 @@ export default function OrderTrackingScreen() {
       loadDeliveredSummary();
       loadRatingInfo(r, user.id);
     }
-  }, [orderId, loadAgentProfile, checkPhotoExists, loadDeliveryPhoto, loadDeliveredSummary, loadRatingInfo]);
+  }, [orderId, loadAgentProfile, loadBidSummary, checkPhotoExists, loadDeliveryPhoto, loadDeliveredSummary, loadRatingInfo]);
 
   useEffect(() => {
     let ignore = false;
@@ -406,11 +422,18 @@ export default function OrderTrackingScreen() {
           loadDeliveryPhoto(orderId);
         },
       )
+      .on(
+        'postgres_changes',
+        { event: 'INSERT', schema: 'public', table: 'bids', filter: `order_id=eq.${orderId}` },
+        () => {
+          if (roleRef.current === 'customer') loadBidSummary(orderId);
+        },
+      )
       .subscribe();
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [orderId, loadAgentProfile, checkPhotoExists, loadDeliveryPhoto, loadDeliveredSummary, loadRatingInfo]);
+  }, [orderId, loadAgentProfile, loadBidSummary, checkPhotoExists, loadDeliveryPhoto, loadDeliveredSummary, loadRatingInfo]);
 
   async function handleRevealOtp() {
     if (!order) return;
@@ -681,6 +704,21 @@ export default function OrderTrackingScreen() {
             <Text style={[styles.sectionText, { color: c.muted }]}>
               Your order is live on the Wall. We&apos;ll update this screen the moment an agent accepts it.
             </Text>
+            {order.pricing_mode === 'auction' && bidSummary && bidSummary.count > 0 && (
+              <>
+                <View style={[styles.divider, { backgroundColor: c.border }]} />
+                <Text style={[styles.sectionText, { color: c.text }]}>
+                  {bidSummary.count} {bidSummary.count === 1 ? 'bid' : 'bids'} so far
+                  {bidSummary.lowestPaise != null ? ` — lowest offer ${formatRupees(bidSummary.lowestPaise)}` : ''}
+                </Text>
+                <Pressable
+                  onPress={() => router.push('/my-orders')}
+                  style={({ pressed }) => [styles.secondaryButton, { borderColor: BLUE, marginTop: 10 }, pressed && { opacity: 0.6 }]}
+                >
+                  <Text style={[styles.secondaryButtonText, { color: BLUE }]}>Review and accept a bid</Text>
+                </Pressable>
+              </>
+            )}
           </View>
         )}
 
