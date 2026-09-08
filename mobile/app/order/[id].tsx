@@ -599,6 +599,20 @@ export default function OrderTrackingScreen() {
     submitSeal('intact', code);
   }
 
+  // No confirmation dialog yet on purpose — wiring check only, see handover.
+  // cancel_order (customer-only, RPC-enforced) allows 'open' or 'accepted'
+  // only, and inserts a cancellation_fees row itself when accepted with a
+  // nonzero cancellation_penalty_paise — nothing extra to do here for that.
+  async function handleCancelOrder() {
+    if (!order) return;
+    const { error } = await supabase.rpc('cancel_order', { p_order_id: order.id });
+    if (error) {
+      Alert.alert("Couldn't cancel order", error.message);
+      return;
+    }
+    setOrder((prev) => (prev ? { ...prev, status: 'cancelled' } : prev));
+  }
+
   async function handleSubmitRating() {
     if (!order || !role || !userId) return;
     if (ratingStars < 1) {
@@ -719,6 +733,12 @@ export default function OrderTrackingScreen() {
                 </Pressable>
               </>
             )}
+            <Pressable
+              onPress={handleCancelOrder}
+              style={({ pressed }) => [styles.primaryButton, { backgroundColor: RED, marginTop: 12 }, pressed && { opacity: 0.7 }]}
+            >
+              <Text style={styles.primaryButtonText}>Cancel order</Text>
+            </Pressable>
           </View>
         )}
 
@@ -745,6 +765,14 @@ export default function OrderTrackingScreen() {
                 </Pressable>
               )}
               <Text style={[styles.note, { color: c.muted }]}>Read this code aloud to your agent at handoff.</Text>
+            </View>
+            <View style={[styles.card, { backgroundColor: c.card, borderColor: c.border }]}>
+              <Pressable
+                onPress={handleCancelOrder}
+                style={({ pressed }) => [styles.primaryButton, { backgroundColor: RED }, pressed && { opacity: 0.7 }]}
+              >
+                <Text style={styles.primaryButtonText}>Cancel order</Text>
+              </Pressable>
             </View>
           </>
         )}
