@@ -146,7 +146,15 @@ export default function ComplaintsQueue() {
   async function setStatus(complaint: Complaint, newStatus: ComplaintStatus) {
     setActionError(null);
     setBusyId(complaint.id);
-    const { error } = await supabase.from('complaints').update({ status: newStatus }).eq('id', complaint.id);
+    const isResolving = newStatus === 'resolved' || newStatus === 'dismissed';
+    const { error } = await supabase
+      .from('complaints')
+      .update({
+        status: newStatus,
+        resolved_at: isResolving ? new Date().toISOString() : null,
+        resolved_by: isResolving ? (await supabase.auth.getUser()).data.user?.id : null,
+      })
+      .eq('id', complaint.id);
     setBusyId(null);
     if (error) {
       setActionError(error.message);
