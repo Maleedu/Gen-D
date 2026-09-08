@@ -145,6 +145,12 @@ export default function OrderTrackingScreen() {
   const [revealingOtp, setRevealingOtp] = useState(false);
   const [otpInput, setOtpInput] = useState('');
   const [verifyingOtp, setVerifyingOtp] = useState(false);
+  // Second, independent code for the delivery leg — same reveal/verify shape
+  // as the pickup OTP above, just agent-reveals/customer-verifies instead of
+  // the other way round (see get_delivery_otp / verify_delivery_seal).
+  const [deliveryOtp, setDeliveryOtp] = useState<string | null>(null);
+  const [revealingDeliveryOtp, setRevealingDeliveryOtp] = useState(false);
+  const [deliveryOtpInput, setDeliveryOtpInput] = useState('');
   // Field names currently showing a red border — cleared the moment that
   // field is edited again, not left stuck on until the next submit attempt.
   const [fieldErrors, setFieldErrors] = useState<Set<string>>(new Set());
@@ -378,6 +384,21 @@ export default function OrderTrackingScreen() {
     setOtp(data as unknown as string);
   }
 
+  // Agent-only, same shape as handleRevealOtp above. Only ever called once
+  // photoExists is true — get_delivery_otp's row is populated by
+  // submit_delivery_photo, not before.
+  async function handleRevealDeliveryOtp() {
+    if (!order) return;
+    setRevealingDeliveryOtp(true);
+    const { data, error } = await supabase.rpc('get_delivery_otp', { p_order_id: order.id });
+    setRevealingDeliveryOtp(false);
+    if (error) {
+      Alert.alert("Couldn't get the delivery code", error.message);
+      return;
+    }
+    setDeliveryOtp(data as unknown as string);
+  }
+
   async function handleVerifyOtp() {
     if (!order) return;
     const code = otpInput.trim();
@@ -397,6 +418,7 @@ export default function OrderTrackingScreen() {
       return;
     }
     if (!data) {
+      setFieldErrors((prev) => new Set(prev).add('otpInput'));
       Alert.alert('Incorrect code', 'Double check the code with the customer and try again.');
       return;
     }
@@ -464,12 +486,13 @@ export default function OrderTrackingScreen() {
     ]);
   }
 
-  async function submitSeal(status: SealStatus) {
+  async function submitSeal(status: SealStatus, submittedOtp: string) {
     if (!order) return;
     setSealSubmitting(status);
     const { data, error } = await supabase.rpc('verify_delivery_seal', {
       p_order_id: order.id,
       p_seal_status: status,
+      p_submitted_otp: submittedOtp,
     });
     setSealSubmitting(null);
     if (error) {
@@ -477,15 +500,25 @@ export default function OrderTrackingScreen() {
       return;
     }
     if (!data) {
-      Alert.alert("Couldn't record seal check", 'Please try again.');
+      // false here means the code was wrong, not a general failure — no
+      // state changed server-side, so this is retryable as-is.
+      setFieldErrors(new Set(['deliveryOtpInput']));
+      Alert.alert('Incorrect code', 'Double check the delivery code with your agent and try again.');
       return;
     }
     setOrder((prev) => (prev ? { ...prev, status: 'delivered' } : prev));
     setSealResult(status);
+    setDeliveryOtpInput('');
     if (status === 'broken') setComplaintStatus('open');
   }
 
   function handleSealCheck(status: SealStatus) {
+    const code = deliveryOtpInput.trim();
+    if (!code) {
+      setFieldErrors(new Set(['deliveryOtpInput']));
+      Alert.alert('Enter the delivery code', 'Ask your agent to read out their delivery code.');
+      return;
+    }
     // Broken flips the order to delivered too (payment already happened
     // outside the app) but auto-raises a complaint — worth a confirm since
     // it can't be walked back from this screen.
@@ -495,12 +528,12 @@ export default function OrderTrackingScreen() {
         'This marks the delivery complete and flags it for admin review.',
         [
           { text: 'Cancel', style: 'cancel' },
-          { text: 'Report broken', style: 'destructive', onPress: () => submitSeal('broken') },
+          { text: 'Report broken', style: 'destructive', onPress: () => submitSeal('broken', code) },
         ],
       );
       return;
     }
-    submitSeal('intact');
+    submitSeal('intact', code);
   }
 
   async function handleSubmitRating() {
@@ -686,8 +719,29 @@ export default function OrderTrackingScreen() {
             ) : photoExists ? (
               <>
                 <Text style={[styles.note, { color: c.muted, marginBottom: 10 }]}>
-                  Your agent has submitted a delivery photo. Confirm whether the seal arrived intact.
+                  Your agent has submitted a delivery photo. Ask them for the delivery code, then confirm whether
+                  the seal arrived intact.
                 </Text>
+                <TextInput
+                  style={[
+                    styles.input,
+                    { backgroundColor: c.inputBg, color: c.text },
+                    fieldErrors.has('deliveryOtpInput') && styles.inputError,
+                  ]}
+                  value={deliveryOtpInput}
+                  onChangeText={(v) => {
+                    setDeliveryOtpInput(v);
+                    setFieldErrors((prev) => {
+                      if (!prev.has('deliveryOtpInput')) return prev;
+                      const next = new Set(prev);
+                      next.delete('deliveryOtpInput');
+                      return next;
+                    });
+                  }}
+                  placeholder="6-digit delivery code"
+                  placeholderTextColor={c.muted}
+                  keyboardType="number-pad"
+                />
                 <View style={styles.sealRow}>
                   <Pressable
                     onPress={() => handleSealCheck('intact')}
@@ -725,9 +779,31 @@ export default function OrderTrackingScreen() {
             <View style={[styles.divider, { backgroundColor: c.border }]} />
             <Text style={[styles.sectionLabel, { color: c.muted }]}>Delivery photo</Text>
             {photoExists ? (
-              <Text style={[styles.note, { color: c.muted }]}>
-                Photo submitted — waiting for the customer to confirm the seal.
-              </Text>
+              <>
+                <Text style={[styles.note, { color: c.muted }]}>
+                  Photo submitted — waiting for the customer to confirm the seal.
+                </Text>
+                <View style={[styles.divider, { backgroundColor: c.border }]} />
+                <Text style={[styles.sectionLabel, { color: c.muted }]}>Delivery code</Text>
+                {deliveryOtp ? (
+                  <Text style={[styles.otpDisplay, { color: c.text }]}>{deliveryOtp}</Text>
+                ) : (
+                  <Pressable
+                    onPress={handleRevealDeliveryOtp}
+                    disabled={revealingDeliveryOtp}
+                    style={({ pressed }) => [
+                      styles.secondaryButton, { borderColor: BLUE }, (pressed || revealingDeliveryOtp) && { opacity: 0.6 },
+                    ]}
+                  >
+                    {revealingDeliveryOtp ? (
+                      <ActivityIndicator size="small" color={BLUE} />
+                    ) : (
+                      <Text style={[styles.secondaryButtonText, { color: BLUE }]}>Show delivery code</Text>
+                    )}
+                  </Pressable>
+                )}
+                <Text style={[styles.note, { color: c.muted }]}>Read this code aloud to the customer to confirm delivery.</Text>
+              </>
             ) : (
               <Pressable
                 onPress={pickDeliveryPhoto}
