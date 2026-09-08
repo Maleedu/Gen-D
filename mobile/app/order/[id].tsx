@@ -105,7 +105,7 @@ function statusMetaFor(status: OrderStatus, role: Role): { label: string; color:
 }
 
 const VEHICLE_LABEL: Record<VehicleType, string> = {
-  bike: '🏍️ Bike', car: '🚗 Car', bus: '🚌 Bus', other: '📦 Other vehicle', none: '',
+  bike: '🏍️ Bike', car: '🚗 Car', bus: '🚌 Bus', other: '📦 Other vehicle', none: '🚶 On foot',
 };
 
 function formatRupees(paise: number | null) {
