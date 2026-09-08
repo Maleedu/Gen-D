@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   View, Text, Pressable, StyleSheet, useColorScheme, Alert,
-  ActivityIndicator, ScrollView, RefreshControl, TextInput, Linking,
+  ActivityIndicator, ScrollView, RefreshControl, TextInput, Linking, Image,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import * as ImagePicker from 'expo-image-picker';
@@ -151,6 +151,11 @@ export default function OrderTrackingScreen() {
   const [deliveryOtp, setDeliveryOtp] = useState<string | null>(null);
   const [revealingDeliveryOtp, setRevealingDeliveryOtp] = useState(false);
   const [deliveryOtpInput, setDeliveryOtpInput] = useState('');
+  // Customer-side reveal of the photo itself — same on-demand shape as
+  // deliveryOtp above, so the customer isn't asked to attest to the seal
+  // from the text description alone.
+  const [deliveryPhotoUrl, setDeliveryPhotoUrl] = useState<string | null>(null);
+  const [loadingDeliveryPhoto, setLoadingDeliveryPhoto] = useState(false);
   // Field names currently showing a red border — cleared the moment that
   // field is edited again, not left stuck on until the next submit attempt.
   const [fieldErrors, setFieldErrors] = useState<Set<string>>(new Set());
@@ -232,6 +237,32 @@ export default function OrderTrackingScreen() {
     setPhotoExists(!!data);
   }, [orderId]);
 
+  // Both roles render it at the same size (styles.deliveryPhoto) — full-size
+  // for the customer's seal decision, and the same for the agent to confirm
+  // what they uploaded. Silently no-ops if the row/signed URL isn't there
+  // yet — callers don't gate on photoExists first, same tolerance
+  // checkPhotoExists has. delivery-photos is a private bucket (see
+  // captureAndSubmitPhoto's note) so the stored path needs a signed URL,
+  // not a public one.
+  const loadDeliveryPhoto = useCallback(async (orderId: string) => {
+    setLoadingDeliveryPhoto(true);
+    const { data: row, error: rowError } = await supabase
+      .from('delivery_photos')
+      .select('photo_url')
+      .eq('order_id', orderId)
+      .maybeSingle();
+    if (rowError || !row) {
+      setLoadingDeliveryPhoto(false);
+      return;
+    }
+    const { data: signed, error: signError } = await supabase.storage
+      .from('delivery-photos')
+      .createSignedUrl(row.photo_url, 3600);
+    setLoadingDeliveryPhoto(false);
+    if (signError || !signed) return;
+    setDeliveryPhotoUrl(signed.signedUrl);
+  }, []);
+
   const loadDeliveredSummary = useCallback(async () => {
     if (!orderId) return;
     const [{ data: verification }, { data: complaint }] = await Promise.all([
@@ -312,12 +343,15 @@ export default function OrderTrackingScreen() {
     setUserId(user.id);
 
     if (r === 'customer' && o.accepted_agent_id) loadAgentProfile(o.accepted_agent_id);
-    if (o.status === 'picked_up') checkPhotoExists();
+    if (o.status === 'picked_up') {
+      checkPhotoExists();
+      loadDeliveryPhoto(orderId);
+    }
     if (o.status === 'delivered') {
       loadDeliveredSummary();
       loadRatingInfo(r, user.id);
     }
-  }, [orderId, loadAgentProfile, checkPhotoExists, loadDeliveredSummary, loadRatingInfo]);
+  }, [orderId, loadAgentProfile, checkPhotoExists, loadDeliveryPhoto, loadDeliveredSummary, loadRatingInfo]);
 
   useEffect(() => {
     let ignore = false;
@@ -354,7 +388,10 @@ export default function OrderTrackingScreen() {
           const next = payload.new as Order;
           setOrder(next);
           if (roleRef.current === 'customer' && next.accepted_agent_id) loadAgentProfile(next.accepted_agent_id);
-          if (next.status === 'picked_up') checkPhotoExists();
+          if (next.status === 'picked_up') {
+            checkPhotoExists();
+            loadDeliveryPhoto(orderId);
+          }
           if (next.status === 'delivered') {
             loadDeliveredSummary();
             if (roleRef.current && userIdRef.current) loadRatingInfo(roleRef.current, userIdRef.current);
@@ -364,13 +401,16 @@ export default function OrderTrackingScreen() {
       .on(
         'postgres_changes',
         { event: 'INSERT', schema: 'public', table: 'delivery_photos', filter: `order_id=eq.${orderId}` },
-        () => setPhotoExists(true),
+        () => {
+          setPhotoExists(true);
+          loadDeliveryPhoto(orderId);
+        },
       )
       .subscribe();
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [orderId, loadAgentProfile, checkPhotoExists, loadDeliveredSummary, loadRatingInfo]);
+  }, [orderId, loadAgentProfile, checkPhotoExists, loadDeliveryPhoto, loadDeliveredSummary, loadRatingInfo]);
 
   async function handleRevealOtp() {
     if (!order) return;
@@ -722,6 +762,15 @@ export default function OrderTrackingScreen() {
                   Your agent has submitted a delivery photo. Ask them for the delivery code, then confirm whether
                   the seal arrived intact.
                 </Text>
+                {deliveryPhotoUrl ? (
+                  <Image
+                    source={{ uri: deliveryPhotoUrl }}
+                    style={styles.deliveryPhoto}
+                    resizeMode="cover"
+                  />
+                ) : loadingDeliveryPhoto ? (
+                  <ActivityIndicator color={BLUE} style={{ marginBottom: 12 }} />
+                ) : null}
                 <TextInput
                   style={[
                     styles.input,
@@ -783,6 +832,13 @@ export default function OrderTrackingScreen() {
                 <Text style={[styles.note, { color: c.muted }]}>
                   Photo submitted — waiting for the customer to confirm the seal.
                 </Text>
+                {deliveryPhotoUrl && (
+                  <Image
+                    source={{ uri: deliveryPhotoUrl }}
+                    style={styles.deliveryPhoto}
+                    resizeMode="cover"
+                  />
+                )}
                 <View style={[styles.divider, { backgroundColor: c.border }]} />
                 <Text style={[styles.sectionLabel, { color: c.muted }]}>Delivery code</Text>
                 {deliveryOtp ? (
@@ -988,6 +1044,8 @@ const styles = StyleSheet.create({
   secondaryButtonText: { fontSize: 14, fontWeight: '700' },
 
   otpDisplay: { fontSize: 32, fontWeight: '800', letterSpacing: 6, textAlign: 'center', marginVertical: 6 },
+
+  deliveryPhoto: { width: '100%', aspectRatio: 4 / 3, borderRadius: 12, marginBottom: 12 },
 
   sealRow: { flexDirection: 'row', gap: 10 },
   sealButton: { flex: 1 },
