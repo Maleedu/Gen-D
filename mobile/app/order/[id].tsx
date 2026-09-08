@@ -43,6 +43,9 @@ type Order = {
   pricing_mode: PricingMode;
   price_paise: number | null;
   min_bid_paise: number | null;
+  // Only ever nonzero once status is 'accepted' — cancel_order itself only
+  // charges it past that point (see handleCancelOrder). Null/0 pre-accept.
+  cancellation_penalty_paise: number | null;
 };
 
 type AgentProfile = {
@@ -71,7 +74,7 @@ type Palette = {
 const ORDER_COLUMNS =
   'id, customer_id, accepted_agent_id, status, item_description, item_category, ' +
   'point_a_address, point_b_address, point_a_lat, point_a_lng, point_b_lat, point_b_lng, ' +
-  'delivery_speed, pricing_mode, price_paise, min_bid_paise';
+  'delivery_speed, pricing_mode, price_paise, min_bid_paise, cancellation_penalty_paise';
 
 const SPEED_META: Record<DeliverySpeed, { label: string; color: string }> = {
   super_fast: { label: 'Priority', color: RED },
@@ -599,10 +602,10 @@ export default function OrderTrackingScreen() {
     submitSeal('intact', code);
   }
 
-  // No confirmation dialog yet on purpose — wiring check only, see handover.
   // cancel_order (customer-only, RPC-enforced) allows 'open' or 'accepted'
   // only, and inserts a cancellation_fees row itself when accepted with a
-  // nonzero cancellation_penalty_paise — nothing extra to do here for that.
+  // nonzero cancellation_penalty_paise — nothing extra to do here for that,
+  // just show the same amount up front in the confirm dialog below.
   async function handleCancelOrder() {
     if (!order) return;
     const { error } = await supabase.rpc('cancel_order', { p_order_id: order.id });
@@ -611,6 +614,23 @@ export default function OrderTrackingScreen() {
       return;
     }
     setOrder((prev) => (prev ? { ...prev, status: 'cancelled' } : prev));
+  }
+
+  // The penalty only ever applies once status is 'accepted' (see
+  // cancel_order's source) — 'open' orders always cancel free.
+  function handleCancelOrderPress() {
+    if (!order) return;
+    const penalty = order.status === 'accepted' ? order.cancellation_penalty_paise : null;
+    Alert.alert(
+      'Cancel this order?',
+      penalty && penalty > 0
+        ? `A cancellation fee of ${formatRupees(penalty)} applies since an agent has already been assigned. This can't be undone.`
+        : "This can't be undone.",
+      [
+        { text: 'Keep order', style: 'cancel' },
+        { text: 'Cancel order', style: 'destructive', onPress: handleCancelOrder },
+      ],
+    );
   }
 
   async function handleSubmitRating() {
@@ -734,7 +754,7 @@ export default function OrderTrackingScreen() {
               </>
             )}
             <Pressable
-              onPress={handleCancelOrder}
+              onPress={handleCancelOrderPress}
               style={({ pressed }) => [styles.primaryButton, { backgroundColor: RED, marginTop: 12 }, pressed && { opacity: 0.7 }]}
             >
               <Text style={styles.primaryButtonText}>Cancel order</Text>
@@ -768,7 +788,7 @@ export default function OrderTrackingScreen() {
             </View>
             <View style={[styles.card, { backgroundColor: c.card, borderColor: c.border }]}>
               <Pressable
-                onPress={handleCancelOrder}
+                onPress={handleCancelOrderPress}
                 style={({ pressed }) => [styles.primaryButton, { backgroundColor: RED }, pressed && { opacity: 0.7 }]}
               >
                 <Text style={styles.primaryButtonText}>Cancel order</Text>
