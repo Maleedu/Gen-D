@@ -164,7 +164,7 @@ export default function KycQueue() {
     const verifiedAt = new Date().toISOString();
     const { error } = await supabase
       .from('agent_documents')
-      .update({ verification_status: status, verified_at: verifiedAt })
+      .update({ verification_status: status, verified_at: verifiedAt, verified_by: (await supabase.auth.getUser()).data.user?.id })
       .eq('id', doc.id);
     setBusyDocId(null);
     if (error) {
