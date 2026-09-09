@@ -196,6 +196,27 @@ export default function KycQueue() {
           )
         : prev,
     );
+
+    // Best-effort only — the verification status is already saved at this
+    // point, so a push failure here must never surface as an error or
+    // affect the flow. No order_id: kyc_decision only checks the caller's
+    // own is_admin flag, unlike the order-participant events.
+    (async () => {
+      try {
+        await supabase.functions.invoke('send-push', {
+          body: {
+            event: 'kyc_decision',
+            recipient_profile_id: group.profileId,
+            title: verified ? 'KYC approved' : 'KYC status updated',
+            body: verified
+              ? 'Your agent verification is complete. You can now accept and bid on deliveries.'
+              : 'Your agent verification status has changed. Check your profile for details.',
+          },
+        });
+      } catch {
+        // Silently ignored — see comment above.
+      }
+    })();
   }
 
   return (
