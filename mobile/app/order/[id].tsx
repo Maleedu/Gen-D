@@ -654,6 +654,29 @@ export default function OrderTrackingScreen() {
       return;
     }
     setOrder((prev) => (prev ? { ...prev, status: 'cancelled' } : prev));
+
+    // Best-effort only — the order is already cancelled at this point, so a
+    // push failure here must never surface as an error or affect the flow.
+    // Skip entirely for an 'open' order with no agent assigned — no one to
+    // notify.
+    if (order.accepted_agent_id) {
+      const agentId = order.accepted_agent_id;
+      (async () => {
+        try {
+          await supabase.functions.invoke('send-push', {
+            body: {
+              event: 'order_cancelled',
+              order_id: order.id,
+              recipient_profile_id: agentId,
+              title: 'Order cancelled',
+              body: 'The customer has cancelled this delivery.',
+            },
+          });
+        } catch {
+          // Silently ignored — see comment above.
+        }
+      })();
+    }
   }
 
   // The penalty only ever applies once status is 'accepted' (see
