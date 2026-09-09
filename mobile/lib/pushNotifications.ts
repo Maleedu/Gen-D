@@ -1,7 +1,14 @@
 import { Platform } from 'react-native';
 import Constants from 'expo-constants';
-import * as Notifications from 'expo-notifications';
 import { supabase } from './supabase';
+
+// expo-notifications' remote (push) notification functionality was removed
+// from Expo Go as of SDK 53 — importing/calling it there throws. We detect
+// Expo Go via Constants.appOwnership and, when running under it, skip
+// notifications entirely rather than let the import or any API call throw.
+// A real device / dev-client build has appOwnership !== 'expo', so behavior
+// there is unchanged.
+const isExpoGo = Constants.appOwnership === 'expo';
 
 // Registers this device for push notifications and links its Expo push
 // token to the given profile in push_tokens. Best-effort only: nothing in
@@ -12,6 +19,15 @@ export async function registerForPushNotifications(profileId: string): Promise<v
     if (Platform.OS !== 'ios' && Platform.OS !== 'android') {
       return;
     }
+
+    if (isExpoGo) {
+      console.log('[pushNotifications] running in Expo Go, push notifications unavailable — skipping registration');
+      return;
+    }
+
+    // Deferred until we know we're not in Expo Go, so the native module is
+    // never loaded (and never throws) under Expo Go.
+    const Notifications = await import('expo-notifications');
 
     const existing = await Notifications.getPermissionsAsync();
     let status = existing.status;
