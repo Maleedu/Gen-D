@@ -269,7 +269,7 @@ export default function PostItemScreen() {
         photoUrls = [publicUrlData.publicUrl];
       }
 
-      const { error: insertError } = await supabase.from('orders').insert({
+      const { data: insertedOrder, error: insertError } = await supabase.from('orders').insert({
         customer_id: userId,
         item_description: description.trim(),
         item_category: category,
@@ -288,13 +288,34 @@ export default function PostItemScreen() {
         is_perishable: isPerishable,
         photo_urls: photoUrls,
         legal_attestation_confirmed: legalConfirmed,
-      });
+      }).select('id').single();
 
       if (insertError) {
         throw new Error(insertError.message);
       }
 
       Alert.alert('Posted', 'Your parcel is live on the Wall.');
+
+      // Best-effort only — the order is already posted at this point, so a
+      // push failure here must never surface as an error or affect the
+      // flow. No recipient_profile_id: nearby_agents_broadcast computes its
+      // own recipients server-side via get_nearby_available_agents off the
+      // order's own pickup coordinates.
+      (async () => {
+        try {
+          await supabase.functions.invoke('send-push', {
+            body: {
+              event: 'nearby_agents_broadcast',
+              order_id: insertedOrder.id,
+              title: 'New delivery nearby!',
+              body: description.trim() || 'A new delivery request is available near you.',
+            },
+          });
+        } catch {
+          // Silently ignored — see comment above.
+        }
+      })();
+
       // My Orders, not the Wall — Wall is Driver-mode-only content now (see
       // the customer-driver mode handover doc, section 8). My Orders
       // re-queries by customer_id, so the new row's id isn't needed here.
