@@ -537,6 +537,25 @@ export default function OrderTrackingScreen() {
 
       setPhotoExists(true);
       Alert.alert('Photo submitted', 'Waiting for the customer to confirm the seal.');
+
+      // Best-effort only — the photo is already submitted at this point, so
+      // a push failure here must never surface as an error or affect the
+      // upload flow.
+      (async () => {
+        try {
+          await supabase.functions.invoke('send-push', {
+            body: {
+              event: 'photo_submitted',
+              order_id: order.id,
+              recipient_profile_id: order.customer_id,
+              title: 'Delivery photo submitted',
+              body: 'Check the photo and confirm the seal is intact.',
+            },
+          });
+        } catch {
+          // Silently ignored — see comment above.
+        }
+      })();
     } catch (err) {
       Alert.alert("Couldn't submit photo", err instanceof Error ? err.message : String(err));
     } finally {
