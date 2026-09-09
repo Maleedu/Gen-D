@@ -1,13 +1,14 @@
 import { useCallback, useEffect, useState } from 'react';
 import {
   View, Text, Pressable, StyleSheet, useColorScheme,
-  FlatList, ActivityIndicator,
+  FlatList, ActivityIndicator, TextInput, KeyboardAvoidingView, Platform,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, Stack, useLocalSearchParams } from 'expo-router';
 import { supabase } from '../../../lib/supabase';
 
 const BLUE = '#1877F2';
+const RED = '#E41E3F';
 
 type SenderProfile = {
   first_name: string;
@@ -25,7 +26,7 @@ type ChatMessage = {
 };
 
 type Palette = {
-  bg: string; text: string; muted: string; card: string; border: string;
+  bg: string; text: string; muted: string; inputBg: string; card: string; border: string;
 };
 
 function formatRelativeTime(iso: string): string {
@@ -49,6 +50,7 @@ export default function ChatScreen() {
     bg: isDark ? '#000000' : '#ffffff',
     text: isDark ? '#ffffff' : '#0f1720',
     muted: isDark ? '#8e8e93' : '#6b7280',
+    inputBg: isDark ? '#1a1a1a' : '#f5f6f8',
     card: isDark ? '#161616' : '#ffffff',
     border: isDark ? '#2e2e32' : '#e5e7eb',
   };
@@ -57,6 +59,13 @@ export default function ChatScreen() {
   const [messages, setMessages] = useState<ChatMessage[] | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
+  // The logged-in user's own profile, fetched once — used to build the
+  // optimistic message locally without a full refetch after sending.
+  const [ownProfile, setOwnProfile] = useState<SenderProfile | null>(null);
+  const [draft, setDraft] = useState('');
+  const [sending, setSending] = useState(false);
+  const [sendError, setSendError] = useState<string | null>(null);
+  const [fieldErrors, setFieldErrors] = useState<Set<string>>(new Set());
 
   // Static fetch only for this step — realtime updates and sending a new
   // message are separate follow-up steps, not built here.
@@ -98,13 +107,47 @@ export default function ChatScreen() {
         return;
       }
       setCurrentUserId(user.id);
-      await loadMessages();
+      const [{ data: profile }] = await Promise.all([
+        supabase
+          .from('profiles')
+          .select('first_name, last_name, avatar_url')
+          .eq('id', user.id)
+          .maybeSingle(),
+        loadMessages(),
+      ]);
+      if (profile) setOwnProfile(profile as SenderProfile);
       setLoading(false);
     })();
   }, [loadMessages]);
 
+  async function handleSend() {
+    const body = draft.trim();
+    if (!body) {
+      setFieldErrors(new Set(['draft']));
+      return;
+    }
+    if (!orderId || !currentUserId) return;
+    setSending(true);
+    setSendError(null);
+    const { data, error } = await supabase
+      .from('order_messages')
+      .insert({ order_id: orderId, sender_id: currentUserId, body })
+      .select('id, order_id, sender_id, body, created_at')
+      .single();
+    setSending(false);
+    if (error || !data) {
+      setSendError(error?.message ?? 'Could not send message. Try again.');
+      return;
+    }
+    setDraft('');
+    setMessages((prev) => [
+      ...(prev ?? []),
+      { ...data, sender: ownProfile ?? { first_name: '', last_name: '', avatar_url: null } },
+    ]);
+  }
+
   return (
-    <SafeAreaView style={[styles.container, { backgroundColor: c.bg }]} edges={['top', 'left', 'right']}>
+    <SafeAreaView style={[styles.container, { backgroundColor: c.bg }]} edges={['top', 'left', 'right', 'bottom']}>
       <Stack.Screen options={{ headerShown: false }} />
       <View style={styles.header}>
         <Pressable onPress={() => router.back()} hitSlop={8}>
@@ -113,29 +156,72 @@ export default function ChatScreen() {
         <Text style={[styles.headerTitle, { color: c.text }]}>Chat</Text>
       </View>
 
-      {loading ? (
-        <View style={styles.centerFill}>
-          <ActivityIndicator color={BLUE} />
-        </View>
-      ) : loadError ? (
-        <View style={styles.centerFill}>
-          <Text style={[styles.errorText, { color: c.text }]}>{loadError}</Text>
-        </View>
-      ) : (
-        <FlatList
-          data={messages ?? []}
-          keyExtractor={(item) => item.id}
-          contentContainerStyle={styles.list}
-          ListEmptyComponent={
-            <View style={styles.centerFill}>
-              <Text style={[styles.emptyText, { color: c.muted }]}>No messages yet.</Text>
+      <KeyboardAvoidingView
+        style={styles.keyboardAvoider}
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+      >
+        {loading ? (
+          <View style={styles.centerFill}>
+            <ActivityIndicator color={BLUE} />
+          </View>
+        ) : loadError ? (
+          <View style={styles.centerFill}>
+            <Text style={[styles.errorText, { color: c.text }]}>{loadError}</Text>
+          </View>
+        ) : (
+          <>
+            <FlatList
+              style={styles.messageList}
+              data={messages ?? []}
+              keyExtractor={(item) => item.id}
+              contentContainerStyle={styles.list}
+              ListEmptyComponent={
+                <View style={styles.centerFill}>
+                  <Text style={[styles.emptyText, { color: c.muted }]}>No messages yet.</Text>
+                </View>
+              }
+              renderItem={({ item }) => (
+                <MessageBubble message={item} isOwn={item.sender_id === currentUserId} c={c} />
+              )}
+            />
+
+            {sendError ? (
+              <Text style={[styles.sendErrorText, { color: RED }]}>{sendError}</Text>
+            ) : null}
+
+            <View style={[styles.inputRow, { borderTopColor: c.border }]}>
+              <TextInput
+                style={[
+                  styles.input,
+                  { backgroundColor: c.inputBg, color: c.text },
+                  fieldErrors.has('draft') && styles.inputError,
+                ]}
+                value={draft}
+                onChangeText={(v) => {
+                  setDraft(v);
+                  setSendError(null);
+                  setFieldErrors((prev) => {
+                    if (!prev.has('draft')) return prev;
+                    const next = new Set(prev);
+                    next.delete('draft');
+                    return next;
+                  });
+                }}
+                placeholder="Message…"
+                placeholderTextColor={c.muted}
+                multiline
+              />
+              <Pressable
+                style={({ pressed }) => [styles.sendButton, (pressed || sending) && { opacity: 0.7 }]}
+                onPress={handleSend}
+                disabled={sending}
+              >
+                <Text style={styles.sendButtonText}>{sending ? 'Sending…' : 'Send'}</Text>
+              </Pressable>
             </View>
-          }
-          renderItem={({ item }) => (
-            <MessageBubble message={item} isOwn={item.sender_id === currentUserId} c={c} />
-          )}
-        />
-      )}
+          </>
+        )}
+      </KeyboardAvoidingView>
     </SafeAreaView>
   );
 }
@@ -185,4 +271,15 @@ const styles = StyleSheet.create({
   bubble: { maxWidth: '78%', borderRadius: 16, paddingHorizontal: 14, paddingVertical: 10, gap: 4 },
   bubbleText: { fontSize: 15, lineHeight: 20 },
   bubbleTime: { fontSize: 11 },
+  keyboardAvoider: { flex: 1 },
+  messageList: { flex: 1 },
+  inputRow: {
+    flexDirection: 'row', alignItems: 'flex-end', gap: 10,
+    paddingHorizontal: 16, paddingVertical: 10, borderTopWidth: StyleSheet.hairlineWidth,
+  },
+  input: { flex: 1, borderRadius: 10, paddingHorizontal: 12, paddingVertical: 10, fontSize: 15, maxHeight: 100 },
+  inputError: { borderWidth: 1.5, borderColor: RED },
+  sendButton: { backgroundColor: BLUE, borderRadius: 12, paddingHorizontal: 18, paddingVertical: 11 },
+  sendButtonText: { color: '#ffffff', fontSize: 14, fontWeight: '700' },
+  sendErrorText: { fontSize: 13, paddingHorizontal: 16, paddingBottom: 4 },
 });
