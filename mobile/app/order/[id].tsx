@@ -595,6 +595,27 @@ export default function OrderTrackingScreen() {
     setSealResult(status);
     setDeliveryOtpInput('');
     if (status === 'broken') setComplaintStatus('open');
+
+    // Best-effort only — the seal check is already recorded at this point,
+    // so a push failure here must never surface as an error or affect the
+    // flow.
+    (async () => {
+      try {
+        await supabase.functions.invoke('send-push', {
+          body: {
+            event: 'order_delivered',
+            order_id: order.id,
+            recipient_profile_id: order.accepted_agent_id,
+            title: status === 'intact' ? 'Delivery confirmed' : 'Seal reported broken',
+            body: status === 'intact'
+              ? 'The customer confirmed the seal was intact. Delivery complete.'
+              : 'The customer reported a broken seal. This delivery is now under review.',
+          },
+        });
+      } catch {
+        // Silently ignored — see comment above.
+      }
+    })();
   }
 
   function handleSealCheck(status: SealStatus) {
