@@ -34,6 +34,7 @@ type WallMode = 'all' | 'on_my_way';
 
 type Order = {
   id: string;
+  customer_id: string;
   item_description: string;
   item_category: string;
   photo_urls: string[];
@@ -84,7 +85,7 @@ const SPEED_META: Record<DeliverySpeed, { label: string; color: string }> = {
 };
 
 const ORDER_COLUMNS =
-  'id, item_description, item_category, photo_urls, point_a_address, point_b_address, ' +
+  'id, customer_id, item_description, item_category, photo_urls, point_a_address, point_b_address, ' +
   'point_a_lat, point_a_lng, point_b_lat, point_b_lng, delivery_speed, pricing_mode, ' +
   'price_paise, min_bid_paise, weight_kg, parcel_size, created_at';
 
@@ -459,6 +460,24 @@ export default function WallScreen() {
       return next;
     });
     Alert.alert(isUpdate ? 'Bid updated' : 'Bid placed', `You bid ₹${raw} on this order.`);
+
+    // Best-effort only — the bid is already placed at this point, so a push
+    // failure here must never surface as an error or affect the flow.
+    (async () => {
+      try {
+        await supabase.functions.invoke('send-push', {
+          body: {
+            event: 'bid_received',
+            order_id: order.id,
+            recipient_profile_id: order.customer_id,
+            title: 'New bid received',
+            body: `₹${raw} offered on your delivery.`,
+          },
+        });
+      } catch {
+        // Silently ignored — see comment above.
+      }
+    })();
   }
 
   function selectMode(next: WallMode) {
