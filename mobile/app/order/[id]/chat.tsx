@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   View, Text, Pressable, StyleSheet, useColorScheme,
   FlatList, ActivityIndicator, TextInput, KeyboardAvoidingView, Platform,
@@ -59,6 +59,11 @@ export default function ChatScreen() {
   const [messages, setMessages] = useState<ChatMessage[] | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
+  // Read inside the realtime callback below instead of closing over
+  // currentUserId directly — the channel subscribes once orderId is known,
+  // before currentUserId is necessarily set, same guard shape as roleRef in
+  // order/[id]/index.tsx.
+  const currentUserIdRef = useRef<string | null>(null);
   // The logged-in user's own profile, fetched once — used to build the
   // optimistic message locally without a full refetch after sending.
   const [ownProfile, setOwnProfile] = useState<SenderProfile | null>(null);
@@ -100,6 +105,10 @@ export default function ChatScreen() {
   }, [orderId]);
 
   useEffect(() => {
+    currentUserIdRef.current = currentUserId;
+  }, [currentUserId]);
+
+  useEffect(() => {
     (async () => {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) {
@@ -119,6 +128,40 @@ export default function ChatScreen() {
       setLoading(false);
     })();
   }, [loadMessages]);
+
+  // Live updates for messages the other party sends while this screen is
+  // open. Only set up once orderId is known, same as loadBids in
+  // my-orders.tsx only runs once reviewingOrderId is set.
+  useEffect(() => {
+    if (!orderId) return;
+    const channel = supabase
+      .channel(`order-messages-${orderId}`)
+      .on(
+        'postgres_changes',
+        { event: 'INSERT', schema: 'public', table: 'order_messages', filter: `order_id=eq.${orderId}` },
+        async (payload) => {
+          const row = payload.new as Omit<ChatMessage, 'sender'>;
+          // Own inserts already landed optimistically via handleSend — skip
+          // to avoid double-adding the same message. currentUserIdRef guards
+          // against this firing before currentUserId is set during initial
+          // load (nothing to compare against yet, so nothing to skip).
+          if (!currentUserIdRef.current || row.sender_id === currentUserIdRef.current) return;
+          const { data: profile } = await supabase
+            .from('profiles')
+            .select('first_name, last_name, avatar_url')
+            .eq('id', row.sender_id)
+            .maybeSingle();
+          setMessages((prev) => [
+            ...(prev ?? []),
+            { ...row, sender: profile ?? { first_name: '', last_name: '', avatar_url: null } },
+          ]);
+        },
+      )
+      .subscribe();
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [orderId]);
 
   async function handleSend() {
     const body = draft.trim();
