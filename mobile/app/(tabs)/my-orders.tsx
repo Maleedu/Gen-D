@@ -215,12 +215,12 @@ export default function MyOrdersScreen() {
       `Accept ${formatRupees(bid.offer_paise)} for this delivery? This can't be undone.`,
       [
         { text: 'Cancel', style: 'cancel' },
-        { text: 'Accept', onPress: () => confirmSelectBid(bid.id) },
+        { text: 'Accept', onPress: () => confirmSelectBid(bid.id, bid.agent_id) },
       ],
     );
   }
 
-  async function confirmSelectBid(bidId: string) {
+  async function confirmSelectBid(bidId: string, agentId: string) {
     if (!reviewingOrderId) return;
     setSubmittingBidId(bidId);
     // accept_bid does all the verification (caller is the customer, order
@@ -246,6 +246,24 @@ export default function MyOrdersScreen() {
     }
     setReviewingOrderId(null);
     loadOrders();
+
+    // Best-effort only — the bid is already accepted at this point, so a
+    // push failure here must never surface as an error or affect the flow.
+    (async () => {
+      try {
+        await supabase.functions.invoke('send-push', {
+          body: {
+            event: 'order_accepted',
+            order_id: reviewingOrderId,
+            recipient_profile_id: agentId,
+            title: 'Order accepted!',
+            body: "You've been assigned a delivery.",
+          },
+        });
+      } catch {
+        // Silently ignored — see comment above.
+      }
+    })();
   }
 
   if (loading) {
