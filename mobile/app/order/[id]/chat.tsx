@@ -71,6 +71,12 @@ export default function ChatScreen() {
   const [sending, setSending] = useState(false);
   const [sendError, setSendError] = useState<string | null>(null);
   const [fieldErrors, setFieldErrors] = useState<Set<string>>(new Set());
+  // The two IDs needed to know who the "other party" is for a chat_message
+  // push — chat.tsx otherwise only knows orderId from route params, never
+  // fetches the full order row like order/[id]/index.tsx does.
+  const [orderParticipants, setOrderParticipants] = useState<
+    { customer_id: string; accepted_agent_id: string | null } | null
+  >(null);
 
   // Static fetch only for this step — realtime updates and sending a new
   // message are separate follow-up steps, not built here.
@@ -104,6 +110,16 @@ export default function ChatScreen() {
     setMessages(merged);
   }, [orderId]);
 
+  const loadOrderParticipants = useCallback(async () => {
+    if (!orderId) return;
+    const { data } = await supabase
+      .from('orders')
+      .select('customer_id, accepted_agent_id')
+      .eq('id', orderId)
+      .maybeSingle();
+    if (data) setOrderParticipants(data);
+  }, [orderId]);
+
   useEffect(() => {
     currentUserIdRef.current = currentUserId;
   }, [currentUserId]);
@@ -123,11 +139,12 @@ export default function ChatScreen() {
           .eq('id', user.id)
           .maybeSingle(),
         loadMessages(),
+        loadOrderParticipants(),
       ]);
       if (profile) setOwnProfile(profile as SenderProfile);
       setLoading(false);
     })();
-  }, [loadMessages]);
+  }, [loadMessages, loadOrderParticipants]);
 
   // Live updates for messages the other party sends while this screen is
   // open. Only set up once orderId is known, same as loadBids in
@@ -187,6 +204,32 @@ export default function ChatScreen() {
       ...(prev ?? []),
       { ...data, sender: ownProfile ?? { first_name: '', last_name: '', avatar_url: null } },
     ]);
+
+    // Best-effort only — the message is already sent at this point, so a
+    // push failure here must never surface as an error or affect the flow.
+    if (orderParticipants) {
+      const recipientId = orderParticipants.customer_id === currentUserId
+        ? orderParticipants.accepted_agent_id
+        : orderParticipants.customer_id;
+      if (recipientId) {
+        const preview = body.length > 80 ? `${body.slice(0, 80)}…` : body;
+        (async () => {
+          try {
+            await supabase.functions.invoke('send-push', {
+              body: {
+                event: 'chat_message',
+                order_id: orderId,
+                recipient_profile_id: recipientId,
+                title: 'New message',
+                body: preview,
+              },
+            });
+          } catch {
+            // Silently ignored — see comment above.
+          }
+        })();
+      }
+    }
   }
 
   return (
