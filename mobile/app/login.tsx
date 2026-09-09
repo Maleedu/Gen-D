@@ -6,6 +6,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { supabase } from '../lib/supabase';
+import { registerForPushNotifications } from '../lib/pushNotifications';
 
 const BLUE = '#1877F2';
 const RED = '#E41E3F';
@@ -67,11 +68,14 @@ export default function LoginScreen() {
     }
 
     setSubmitting(true);
-    const { error } = await supabase.auth.signInWithPassword({ email, password });
+    const { data, error } = await supabase.auth.signInWithPassword({ email, password });
     setSubmitting(false);
     if (error) {
       Alert.alert('Login failed', error.message);
       return;
+    }
+    if (data.user) {
+      registerForPushNotifications(data.user.id);
     }
     router.replace('/');
   }
@@ -118,7 +122,7 @@ export default function LoginScreen() {
       return;
     }
     setSubmitting(true);
-    const { error } = await supabase.auth.verifyOtp({
+    const { data, error } = await supabase.auth.verifyOtp({
       phone: `+91${phoneNumber}`,
       token: phoneOtp,
       type: 'sms',
@@ -127,6 +131,9 @@ export default function LoginScreen() {
     if (error) {
       Alert.alert('Verification failed', error.message);
       return;
+    }
+    if (data.user) {
+      registerForPushNotifications(data.user.id);
     }
     router.replace('/');
   }
