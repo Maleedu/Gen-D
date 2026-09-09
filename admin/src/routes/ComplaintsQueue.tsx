@@ -161,6 +161,42 @@ export default function ComplaintsQueue() {
       return;
     }
     setComplaints((prev) => (prev ? prev.map((c) => (c.id === complaint.id ? { ...c, status: newStatus } : c)) : prev));
+
+    // Best-effort only — the status is already saved at this point, so a
+    // push failure here must never surface as an error or affect the flow.
+    // No order_id in the payload: complaint_resolved only checks the
+    // caller's own is_admin flag, same as kyc_decision. Only fires for the
+    // actual resolution moment (resolved/dismissed), not open/investigating.
+    if (isResolving) {
+      (async () => {
+        try {
+          const { data: order } = await supabase
+            .from('orders')
+            .select('customer_id, accepted_agent_id')
+            .eq('id', complaint.order_id)
+            .maybeSingle();
+          if (!order) return;
+          const recipientId = complaint.raised_by === order.customer_id
+            ? order.accepted_agent_id
+            : complaint.raised_by === order.accepted_agent_id
+              ? order.customer_id
+              : null;
+          if (!recipientId) return;
+          await supabase.functions.invoke('send-push', {
+            body: {
+              event: 'complaint_resolved',
+              recipient_profile_id: recipientId,
+              title: 'Complaint update',
+              body: newStatus === 'resolved'
+                ? 'Your complaint has been resolved. Check the order for details.'
+                : 'Your complaint has been reviewed and dismissed.',
+            },
+          });
+        } catch {
+          // Silently ignored — see comment above.
+        }
+      })();
+    }
   }
 
   return (
