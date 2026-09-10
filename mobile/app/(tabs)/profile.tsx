@@ -10,8 +10,8 @@ import { decode } from 'base64-arraybuffer';
 import { supabase } from '../../lib/supabase';
 import { AgentAvatar } from '../../components/agent-avatar';
 import { useViewMode } from '../../lib/view-mode';
+import { CUSTOMER_COLOR, AGENT_COLOR } from '../../lib/colors';
 
-const BLUE = '#1877F2';
 const RED = '#E41E3F';
 const GREEN = '#1F9254';
 
@@ -41,6 +41,11 @@ export default function CustomerProfileScreen() {
     card: isDark ? '#161616' : '#ffffff',
     border: isDark ? '#2e2e32' : '#e5e7eb',
   };
+  // Mode-reactive accent — CUSTOMER_COLOR in customer mode, AGENT_COLOR in
+  // driver mode. The KYC card only ever renders in driver mode, so this
+  // always resolves to AGENT_COLOR there, but it's derived rather than
+  // hardcoded for consistency with everything else on this screen.
+  const accent = mode === 'driver' ? AGENT_COLOR : CUSTOMER_COLOR;
 
   const [profile, setProfile] = useState<Profile | null>(null);
   const [email, setEmail] = useState<string | null>(null);
@@ -157,7 +162,7 @@ export default function CustomerProfileScreen() {
     return (
       <SafeAreaView style={[styles.container, { backgroundColor: c.bg }]}>
         <View style={styles.centerFill}>
-          <ActivityIndicator color={BLUE} />
+          <ActivityIndicator color={accent} />
         </View>
       </SafeAreaView>
     );
@@ -177,7 +182,7 @@ export default function CustomerProfileScreen() {
     <SafeAreaView style={[styles.container, { backgroundColor: c.bg }]} edges={['top', 'left', 'right']}>
       <ScrollView
         contentContainerStyle={styles.scroll}
-        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={BLUE} colors={[BLUE]} />}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={accent} colors={[accent]} />}
       >
         <View style={styles.header}>
           <Pressable
@@ -190,7 +195,7 @@ export default function CustomerProfileScreen() {
               lastName={profile.last_name}
               avatarUrl={profile.avatar_url}
               size={72}
-              color={BLUE}
+              color={accent}
             />
             {uploadingAvatar && (
               <View style={styles.avatarOverlay}>
@@ -216,14 +221,14 @@ export default function CustomerProfileScreen() {
           profile.is_agent_verified ? (
             <Pressable
               onPress={() => router.push('/kyc')}
-              style={({ pressed }) => [styles.kycBadge, { backgroundColor: c.card, borderColor: c.border }, pressed && { opacity: 0.6 }]}
+              style={({ pressed }) => [styles.kycBadge, { backgroundColor: c.card, borderColor: accent }, pressed && { opacity: 0.6 }]}
             >
               <Text style={[styles.kycBadgeText, { color: GREEN }]}>✓ KYC Verified</Text>
             </Pressable>
           ) : (
             <Pressable
               onPress={() => router.push('/kyc')}
-              style={({ pressed }) => [styles.primaryButton, pressed && { opacity: 0.7 }]}
+              style={({ pressed }) => [styles.primaryButton, { backgroundColor: accent }, pressed && { opacity: 0.7 }]}
             >
               <Text style={styles.primaryButtonText}>Complete KYC verification</Text>
             </Pressable>
@@ -232,9 +237,9 @@ export default function CustomerProfileScreen() {
 
         <Pressable
           onPress={() => router.push('/my-orders')}
-          style={({ pressed }) => [styles.secondaryButton, { borderColor: BLUE }, pressed && { opacity: 0.6 }]}
+          style={({ pressed }) => [styles.secondaryButton, { borderColor: accent }, pressed && { opacity: 0.6 }]}
         >
-          <Text style={[styles.secondaryButtonText, { color: BLUE }]}>
+          <Text style={[styles.secondaryButtonText, { color: accent }]}>
             {mode === 'driver' ? 'View My Deliveries' : 'View My Orders'}
           </Text>
         </Pressable>
@@ -277,7 +282,7 @@ const styles = StyleSheet.create({
   kycBadge: { borderRadius: 12, borderWidth: StyleSheet.hairlineWidth, paddingVertical: 13, alignItems: 'center' },
   kycBadgeText: { fontSize: 14, fontWeight: '700' },
 
-  primaryButton: { backgroundColor: BLUE, borderRadius: 12, paddingVertical: 14, alignItems: 'center' },
+  primaryButton: { borderRadius: 12, paddingVertical: 14, alignItems: 'center' },
   primaryButtonText: { color: '#ffffff', fontSize: 15, fontWeight: '700' },
 
   secondaryButton: { borderRadius: 12, borderWidth: 1.5, paddingVertical: 13, alignItems: 'center' },

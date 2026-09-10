@@ -2,9 +2,17 @@ import { View, Text, Pressable, StyleSheet, useColorScheme } from 'react-native'
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { useViewMode, type ViewMode } from '../../lib/view-mode';
+import { CUSTOMER_COLOR, AGENT_COLOR } from '../../lib/colors';
 
-const BLUE = '#1877F2';   // Facebook blue — sending/posting
-const AMBER = '#F59E0B';  // earning/delivering
+// Converts a '#rrggbb' hex color to an rgba() string at the given opacity —
+// used for secondaryRow's border, which needs a translucent version of
+// whichever accent color is active for the current mode.
+function withOpacity(hex: string, opacity: number) {
+  const r = parseInt(hex.slice(1, 3), 16);
+  const g = parseInt(hex.slice(3, 5), 16);
+  const b = parseInt(hex.slice(5, 7), 16);
+  return `rgba(${r}, ${g}, ${b}, ${opacity})`;
+}
 
 export default function HomeScreen() {
   const isDark = useColorScheme() === 'dark';
@@ -21,9 +29,9 @@ export default function HomeScreen() {
     <SafeAreaView style={[styles.container, { backgroundColor: c.bg }]}>
       <View style={styles.header}>
         <View style={styles.routeDots}>
-          <View style={[styles.dot, { backgroundColor: BLUE }]} />
+          <View style={[styles.dot, { backgroundColor: CUSTOMER_COLOR }]} />
           <View style={[styles.dotLine, { backgroundColor: c.muted }]} />
-          <View style={[styles.dot, { backgroundColor: AMBER }]} />
+          <View style={[styles.dot, { backgroundColor: AGENT_COLOR }]} />
         </View>
         <Text style={[styles.logo, { color: c.text }]}>Gen-D</Text>
         <Text style={[styles.tagline, { color: c.muted }]}>
@@ -36,7 +44,7 @@ export default function HomeScreen() {
       {isDriver ? (
         <Pressable
           onPress={() => router.push('/wall')}
-          style={({ pressed }) => [styles.hero, { backgroundColor: AMBER }, pressed && styles.pressed]}
+          style={({ pressed }) => [styles.hero, { backgroundColor: AGENT_COLOR }, pressed && styles.pressed]}
         >
           <Text style={styles.heroTitle}>Deliver a parcel</Text>
           <Text style={styles.heroSubtitle}>Browse The Wall and start earning</Text>
@@ -56,11 +64,11 @@ export default function HomeScreen() {
           onPress={() => router.push('/explore')}
           style={({ pressed }) => [
             styles.secondaryRow,
-            { backgroundColor: c.row },
+            { backgroundColor: c.row, borderColor: withOpacity(AGENT_COLOR, 0.35) },
             pressed && styles.pressed,
           ]}
         >
-          <View style={[styles.secondaryDot, { backgroundColor: BLUE }]} />
+          <View style={[styles.secondaryDot, { backgroundColor: AGENT_COLOR }]} />
           <View style={styles.secondaryTextGroup}>
             <Text style={[styles.secondaryTitle, { color: c.text }]}>Your progress</Text>
             <Text style={[styles.secondarySubtitle, { color: c.muted }]}>
@@ -73,11 +81,11 @@ export default function HomeScreen() {
           onPress={() => router.push('/my-orders')}
           style={({ pressed }) => [
             styles.secondaryRow,
-            { backgroundColor: c.row },
+            { backgroundColor: c.row, borderColor: withOpacity(CUSTOMER_COLOR, 0.35) },
             pressed && styles.pressed,
           ]}
         >
-          <View style={[styles.secondaryDot, { backgroundColor: AMBER }]} />
+          <View style={[styles.secondaryDot, { backgroundColor: CUSTOMER_COLOR }]} />
           <View style={styles.secondaryTextGroup}>
             <Text style={[styles.secondaryTitle, { color: c.text }]}>My orders</Text>
             <Text style={[styles.secondarySubtitle, { color: c.muted }]}>
@@ -95,8 +103,8 @@ function ModeToggle({
 }: { mode: ViewMode; onChange: (mode: ViewMode) => void; c: { text: string; row: string } }) {
   return (
     <View style={[styles.modeRow, { backgroundColor: c.row }]}>
-      <ModePill label="Customer" active={mode === 'customer'} color={BLUE} onPress={() => onChange('customer')} c={c} />
-      <ModePill label="Agent" active={mode === 'driver'} color={AMBER} onPress={() => onChange('driver')} c={c} />
+      <ModePill label="Customer" active={mode === 'customer'} color={CUSTOMER_COLOR} onPress={() => onChange('customer')} c={c} />
+      <ModePill label="Agent" active={mode === 'driver'} color={AGENT_COLOR} onPress={() => onChange('driver')} c={c} />
     </View>
   );
 }
@@ -130,7 +138,7 @@ const styles = StyleSheet.create({
   modePillText: { fontSize: 14, fontWeight: '700' },
 
   hero: {
-    backgroundColor: BLUE,
+    backgroundColor: CUSTOMER_COLOR,
     borderRadius: 22,
     paddingVertical: 30,
     paddingHorizontal: 24,
@@ -144,7 +152,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     borderRadius: 18,
     borderWidth: 1.5,
-    borderColor: 'rgba(245, 158, 11, 0.35)',
     padding: 24,
     gap: 14,
   },
