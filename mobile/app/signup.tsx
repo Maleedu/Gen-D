@@ -4,6 +4,7 @@ import {
   useColorScheme, Alert, ScrollView, Switch, KeyboardAvoidingView, Platform,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import MaterialIcons from '@expo/vector-icons/MaterialIcons';
 import { router } from 'expo-router';
 import { supabase } from '../lib/supabase';
 
@@ -275,6 +276,9 @@ function Field(props: {
   c: { text: string; muted: string; inputBg: string };
   error?: boolean;
 }) {
+  // Local to each Field instance — Password and Retype password toggle
+  // independently without the parent form tracking anything.
+  const [visible, setVisible] = useState(false);
   return (
     <View style={styles.fieldWrapper}>
       <Text style={[styles.label, { color: props.c.muted }]}>{props.label}</Text>
@@ -282,33 +286,46 @@ function Field(props: {
         <View style={[styles.inputRow, { backgroundColor: props.c.inputBg }, props.error && styles.inputError]}>
           <Text style={[styles.inputPrefix, { color: props.c.muted }]}>{props.prefix}</Text>
           <TextInput
-            style={[styles.inputFlex, { color: props.c.text }]}
+            style={[styles.inputFlex, { color: props.c.text }, props.secureTextEntry && { paddingRight: 44 }]}
             value={props.value}
             onChangeText={props.onChangeText}
             placeholder={props.placeholder}
             placeholderTextColor={props.c.muted}
-            secureTextEntry={props.secureTextEntry}
+            secureTextEntry={props.secureTextEntry && !visible}
             keyboardType={props.keyboardType}
             autoCapitalize={props.autoCapitalize ?? 'sentences'}
             maxLength={props.maxLength}
           />
+          {props.secureTextEntry && (
+            <Pressable onPress={() => setVisible((v) => !v)} style={styles.eyeButton} hitSlop={8}>
+              <MaterialIcons name={visible ? 'visibility-off' : 'visibility'} size={20} color={props.c.muted} />
+            </Pressable>
+          )}
         </View>
       ) : (
-        <TextInput
-          style={[
-            styles.input,
-            { backgroundColor: props.c.inputBg, color: props.c.text },
-            props.error && styles.inputError,
-          ]}
-          value={props.value}
-          onChangeText={props.onChangeText}
-          placeholder={props.placeholder}
-          placeholderTextColor={props.c.muted}
-          secureTextEntry={props.secureTextEntry}
-          keyboardType={props.keyboardType}
-          autoCapitalize={props.autoCapitalize ?? 'sentences'}
-          maxLength={props.maxLength}
-        />
+        <View style={styles.inputWrap}>
+          <TextInput
+            style={[
+              styles.input,
+              { backgroundColor: props.c.inputBg, color: props.c.text },
+              props.secureTextEntry && { paddingRight: 44 },
+              props.error && styles.inputError,
+            ]}
+            value={props.value}
+            onChangeText={props.onChangeText}
+            placeholder={props.placeholder}
+            placeholderTextColor={props.c.muted}
+            secureTextEntry={props.secureTextEntry && !visible}
+            keyboardType={props.keyboardType}
+            autoCapitalize={props.autoCapitalize ?? 'sentences'}
+            maxLength={props.maxLength}
+          />
+          {props.secureTextEntry && (
+            <Pressable onPress={() => setVisible((v) => !v)} style={styles.eyeButton} hitSlop={8}>
+              <MaterialIcons name={visible ? 'visibility-off' : 'visibility'} size={20} color={props.c.muted} />
+            </Pressable>
+          )}
+        </View>
       )}
     </View>
   );
@@ -323,9 +340,11 @@ const styles = StyleSheet.create({
   label: { fontSize: 13, marginBottom: 6 },
   input: { borderRadius: 12, padding: 14, fontSize: 16 },
   inputError: { borderWidth: 1.5, borderColor: RED },
-  inputRow: { flexDirection: 'row', alignItems: 'center', borderRadius: 12, paddingHorizontal: 14 },
+  inputRow: { flexDirection: 'row', alignItems: 'center', borderRadius: 12, paddingHorizontal: 14, position: 'relative' },
   inputPrefix: { fontSize: 16, marginRight: 6 },
   inputFlex: { flex: 1, paddingVertical: 14, fontSize: 16 },
+  inputWrap: { position: 'relative' },
+  eyeButton: { position: 'absolute', top: 0, bottom: 0, right: 12, justifyContent: 'center' },
   switchRow: { flexDirection: 'row', alignItems: 'center', gap: 12, marginTop: 14, marginBottom: 4 },
   switchLabel: { flex: 1, fontSize: 14 },
   button: { backgroundColor: BLUE, borderRadius: 14, padding: 17, marginTop: 28, alignItems: 'center' },

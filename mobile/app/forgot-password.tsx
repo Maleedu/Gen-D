@@ -4,6 +4,7 @@ import {
   useColorScheme, Alert, KeyboardAvoidingView, Platform, ScrollView,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import MaterialIcons from '@expo/vector-icons/MaterialIcons';
 import { router } from 'expo-router';
 import { supabase } from '../lib/supabase';
 
@@ -34,7 +35,9 @@ export default function ForgotPasswordScreen() {
 
   const [code, setCode] = useState('');
   const [newPassword, setNewPassword] = useState('');
+  const [showNewPassword, setShowNewPassword] = useState(false);
   const [confirmPassword, setConfirmPassword] = useState('');
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   // Once verifyOtp succeeds it can't be replayed — track that separately so
   // a retry after a failed updateUser() (e.g. weak password) just retries
   // updateUser() on the session that's already set, without resubmitting
@@ -190,32 +193,42 @@ export default function ForgotPasswordScreen() {
               />
 
               <Text style={[styles.label, { color: c.muted }]}>New password</Text>
-              <TextInput
-                style={[
-                  styles.input,
-                  { backgroundColor: c.inputBg, color: c.text },
-                  fieldErrors.has('newPassword') && styles.inputError,
-                ]}
-                secureTextEntry
-                value={newPassword}
-                onChangeText={(v) => { setNewPassword(v); clearFieldError('newPassword'); }}
-                placeholder="••••••••"
-                placeholderTextColor={c.muted}
-              />
+              <View style={styles.inputWrap}>
+                <TextInput
+                  style={[
+                    styles.input,
+                    { backgroundColor: c.inputBg, color: c.text, paddingRight: 44 },
+                    fieldErrors.has('newPassword') && styles.inputError,
+                  ]}
+                  secureTextEntry={!showNewPassword}
+                  value={newPassword}
+                  onChangeText={(v) => { setNewPassword(v); clearFieldError('newPassword'); }}
+                  placeholder="••••••••"
+                  placeholderTextColor={c.muted}
+                />
+                <Pressable onPress={() => setShowNewPassword((v) => !v)} style={styles.eyeButton} hitSlop={8}>
+                  <MaterialIcons name={showNewPassword ? 'visibility-off' : 'visibility'} size={20} color={c.muted} />
+                </Pressable>
+              </View>
 
               <Text style={[styles.label, { color: c.muted }]}>Confirm password</Text>
-              <TextInput
-                style={[
-                  styles.input,
-                  { backgroundColor: c.inputBg, color: c.text },
-                  fieldErrors.has('confirmPassword') && styles.inputError,
-                ]}
-                secureTextEntry
-                value={confirmPassword}
-                onChangeText={(v) => { setConfirmPassword(v); clearFieldError('confirmPassword'); }}
-                placeholder="••••••••"
-                placeholderTextColor={c.muted}
-              />
+              <View style={styles.inputWrap}>
+                <TextInput
+                  style={[
+                    styles.input,
+                    { backgroundColor: c.inputBg, color: c.text, paddingRight: 44 },
+                    fieldErrors.has('confirmPassword') && styles.inputError,
+                  ]}
+                  secureTextEntry={!showConfirmPassword}
+                  value={confirmPassword}
+                  onChangeText={(v) => { setConfirmPassword(v); clearFieldError('confirmPassword'); }}
+                  placeholder="••••••••"
+                  placeholderTextColor={c.muted}
+                />
+                <Pressable onPress={() => setShowConfirmPassword((v) => !v)} style={styles.eyeButton} hitSlop={8}>
+                  <MaterialIcons name={showConfirmPassword ? 'visibility-off' : 'visibility'} size={20} color={c.muted} />
+                </Pressable>
+              </View>
 
               <Pressable
                 style={({ pressed }) => [styles.button, pressed && { opacity: 0.85 }]}
@@ -255,6 +268,8 @@ const styles = StyleSheet.create({
   label: { fontSize: 13, marginBottom: 6, marginTop: 16 },
   input: { borderRadius: 12, padding: 14, fontSize: 16 },
   inputError: { borderWidth: 1.5, borderColor: RED },
+  inputWrap: { position: 'relative' },
+  eyeButton: { position: 'absolute', top: 0, bottom: 0, right: 12, justifyContent: 'center' },
   button: { backgroundColor: BLUE, borderRadius: 14, padding: 17, marginTop: 32, alignItems: 'center' },
   buttonText: { color: '#ffffff', fontSize: 16, fontWeight: '700' },
   link: { textAlign: 'center', marginTop: 22, fontSize: 14, fontWeight: '600' },

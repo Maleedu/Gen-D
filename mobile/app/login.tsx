@@ -4,6 +4,7 @@ import {
   useColorScheme, Alert, KeyboardAvoidingView, Platform, ScrollView,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import MaterialIcons from '@expo/vector-icons/MaterialIcons';
 import { router } from 'expo-router';
 import { supabase } from '../lib/supabase';
 import { registerForPushNotifications } from '../lib/pushNotifications';
@@ -28,6 +29,7 @@ export default function LoginScreen() {
 
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   // Field names currently showing a red border — cleared the moment that
   // field is edited again, not left stuck on until the next submit attempt.
@@ -176,18 +178,23 @@ export default function LoginScreen() {
               />
 
               <Text style={[styles.label, { color: c.muted }]}>Password</Text>
-              <TextInput
-                style={[
-                  styles.input,
-                  { backgroundColor: c.inputBg, color: c.text },
-                  fieldErrors.has('password') && styles.inputError,
-                ]}
-                secureTextEntry
-                value={password}
-                onChangeText={(v) => { setPassword(v); clearFieldError('password'); }}
-                placeholder="••••••••"
-                placeholderTextColor={c.muted}
-              />
+              <View style={styles.inputWrap}>
+                <TextInput
+                  style={[
+                    styles.input,
+                    { backgroundColor: c.inputBg, color: c.text, paddingRight: 44 },
+                    fieldErrors.has('password') && styles.inputError,
+                  ]}
+                  secureTextEntry={!showPassword}
+                  value={password}
+                  onChangeText={(v) => { setPassword(v); clearFieldError('password'); }}
+                  placeholder="••••••••"
+                  placeholderTextColor={c.muted}
+                />
+                <Pressable onPress={() => setShowPassword((v) => !v)} style={styles.eyeButton} hitSlop={8}>
+                  <MaterialIcons name={showPassword ? 'visibility-off' : 'visibility'} size={20} color={c.muted} />
+                </Pressable>
+              </View>
 
               <Pressable onPress={() => router.push('/forgot-password')} hitSlop={4}>
                 <Text style={[styles.forgotLink, { color: BLUE }]}>Forgot password?</Text>
@@ -313,6 +320,8 @@ const styles = StyleSheet.create({
   label: { fontSize: 13, marginBottom: 6, marginTop: 16 },
   input: { borderRadius: 12, padding: 14, fontSize: 16 },
   inputError: { borderWidth: 1.5, borderColor: RED },
+  inputWrap: { position: 'relative' },
+  eyeButton: { position: 'absolute', top: 0, bottom: 0, right: 12, justifyContent: 'center' },
   forgotLink: { textAlign: 'right', marginTop: 10, fontSize: 13, fontWeight: '600' },
   inputRow: { flexDirection: 'row', alignItems: 'center', borderRadius: 12, paddingHorizontal: 14 },
   inputPrefix: { fontSize: 16, marginRight: 6 },
