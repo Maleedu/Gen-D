@@ -8,7 +8,8 @@
     "scheme": "gend",
     "userInterfaceStyle": "automatic",
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "bundleIdentifier": "in.gend.mobile"
     },
     "android": {
       "adaptiveIcon": {
@@ -23,7 +24,7 @@
         "android.permission.ACCESS_FINE_LOCATION",
         "android.permission.RECORD_AUDIO"
       ],
-      "package": "com.anonymous.mobile"
+      "package": "in.gend.mobile"
     },
     "web": {
       "output": "single",
