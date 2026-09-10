@@ -24,7 +24,8 @@
         "android.permission.ACCESS_FINE_LOCATION",
         "android.permission.RECORD_AUDIO"
       ],
-      "package": "in.gend.mobile"
+      "package": "in.gend.mobile",
+      "googleServicesFile": "./google-services.json"
     },
     "web": {
       "output": "single",
