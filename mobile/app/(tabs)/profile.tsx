@@ -251,6 +251,14 @@ export default function CustomerProfileScreen() {
         >
           <Text style={[styles.secondaryButtonText, { color: RED }]}>{loggingOut ? 'Logging out…' : 'Log out'}</Text>
         </Pressable>
+
+        <View style={styles.creditBlock}>
+          <View style={styles.creditRow}>
+            <Text style={[styles.creditText, { color: c.muted }]}>Made in India</Text>
+            <Text style={styles.creditFlag}>🇮🇳</Text>
+          </View>
+          <Text style={[styles.creditSubtext, { color: c.muted }]}>By Navajyoth Maleedu</Text>
+        </View>
       </ScrollView>
     </SafeAreaView>
   );
@@ -261,6 +269,12 @@ const styles = StyleSheet.create({
   centerFill: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 32 },
   errorText: { fontSize: 15, textAlign: 'center', lineHeight: 21 },
   scroll: { padding: 16, paddingBottom: 40, gap: 14 },
+
+  creditBlock: { alignItems: 'center', gap: 2, marginTop: 24 },
+  creditRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  creditFlag: { fontSize: 12 },
+  creditText: { fontSize: 11 },
+  creditSubtext: { fontSize: 10, opacity: 0.7 },
 
   header: { alignItems: 'center', paddingVertical: 8, gap: 10 },
   name: { fontSize: 19, fontWeight: '800' },
