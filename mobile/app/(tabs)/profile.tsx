@@ -13,12 +13,14 @@ import { useViewMode } from '../../lib/view-mode';
 
 const BLUE = '#1877F2';
 const RED = '#E41E3F';
+const GREEN = '#1F9254';
 
 type Profile = {
   first_name: string;
   last_name: string;
   avatar_url: string | null;
   phone_number: string | null;
+  is_agent_verified: boolean;
 };
 
 type Palette = {
@@ -61,7 +63,7 @@ export default function CustomerProfileScreen() {
     setEmail(user.email ?? null);
     const { data, error } = await supabase
       .from('profiles')
-      .select('first_name, last_name, avatar_url, phone_number')
+      .select('first_name, last_name, avatar_url, phone_number, is_agent_verified')
       .eq('id', user.id)
       .maybeSingle();
     if (error) {
@@ -210,6 +212,24 @@ export default function CustomerProfileScreen() {
           )}
         </View>
 
+        {mode === 'driver' && (
+          profile.is_agent_verified ? (
+            <Pressable
+              onPress={() => router.push('/kyc')}
+              style={({ pressed }) => [styles.kycBadge, { backgroundColor: c.card, borderColor: c.border }, pressed && { opacity: 0.6 }]}
+            >
+              <Text style={[styles.kycBadgeText, { color: GREEN }]}>✓ KYC Verified</Text>
+            </Pressable>
+          ) : (
+            <Pressable
+              onPress={() => router.push('/kyc')}
+              style={({ pressed }) => [styles.primaryButton, pressed && { opacity: 0.7 }]}
+            >
+              <Text style={styles.primaryButtonText}>Complete KYC verification</Text>
+            </Pressable>
+          )
+        )}
+
         <Pressable
           onPress={() => router.push('/my-orders')}
           style={({ pressed }) => [styles.secondaryButton, { borderColor: BLUE }, pressed && { opacity: 0.6 }]}
@@ -253,6 +273,12 @@ const styles = StyleSheet.create({
   card: { borderRadius: 16, borderWidth: StyleSheet.hairlineWidth, padding: 16, gap: 8 },
   sectionLabel: { fontSize: 13, fontWeight: '700' },
   contactLine: { fontSize: 14 },
+
+  kycBadge: { borderRadius: 12, borderWidth: StyleSheet.hairlineWidth, paddingVertical: 13, alignItems: 'center' },
+  kycBadgeText: { fontSize: 14, fontWeight: '700' },
+
+  primaryButton: { backgroundColor: BLUE, borderRadius: 12, paddingVertical: 14, alignItems: 'center' },
+  primaryButtonText: { color: '#ffffff', fontSize: 15, fontWeight: '700' },
 
   secondaryButton: { borderRadius: 12, borderWidth: 1.5, paddingVertical: 13, alignItems: 'center' },
   secondaryButtonText: { fontSize: 14, fontWeight: '700' },
