@@ -5,6 +5,8 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
+import * as ImagePicker from 'expo-image-picker';
+import { decode } from 'base64-arraybuffer';
 import { supabase } from '../../lib/supabase';
 import { AgentAvatar } from '../../components/agent-avatar';
 import { useViewMode } from '../../lib/view-mode';
@@ -44,6 +46,7 @@ export default function CustomerProfileScreen() {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [loggingOut, setLoggingOut] = useState(false);
+  const [uploadingAvatar, setUploadingAvatar] = useState(false);
 
   const load = useCallback(async () => {
     setLoadError(null);
@@ -96,6 +99,58 @@ export default function CustomerProfileScreen() {
     router.replace('/login');
   }
 
+  async function handlePickAvatar() {
+    const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (!perm.granted) {
+      Alert.alert('Permission needed', 'Allow photo library access to update your profile picture.');
+      return;
+    }
+
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ['images'],
+      allowsEditing: true,
+      aspect: [1, 1],
+      quality: 0.7,
+      base64: true,
+    });
+    if (result.canceled) return;
+
+    const asset = result.assets[0];
+    if (!asset.base64) {
+      Alert.alert("Couldn't update photo", 'No image data was returned.');
+      return;
+    }
+
+    setUploadingAvatar(true);
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) {
+        router.replace('/login');
+        return;
+      }
+
+      const path = `${user.id}/avatar.jpg`;
+      const { error: uploadError } = await supabase.storage
+        .from('avatars')
+        .upload(path, decode(asset.base64), { contentType: 'image/jpeg', upsert: true });
+      if (uploadError) throw uploadError;
+
+      const { data: { publicUrl } } = supabase.storage.from('avatars').getPublicUrl(path);
+
+      const { error: updateError } = await supabase
+        .from('profiles')
+        .update({ avatar_url: publicUrl })
+        .eq('id', user.id);
+      if (updateError) throw updateError;
+
+      setProfile((prev) => (prev ? { ...prev, avatar_url: publicUrl } : prev));
+    } catch (err: any) {
+      Alert.alert("Couldn't update photo", err?.message ?? 'Something went wrong.');
+    } finally {
+      setUploadingAvatar(false);
+    }
+  }
+
   if (loading) {
     return (
       <SafeAreaView style={[styles.container, { backgroundColor: c.bg }]}>
@@ -123,13 +178,24 @@ export default function CustomerProfileScreen() {
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={BLUE} colors={[BLUE]} />}
       >
         <View style={styles.header}>
-          <AgentAvatar
-            firstName={profile.first_name}
-            lastName={profile.last_name}
-            avatarUrl={profile.avatar_url}
-            size={72}
-            color={BLUE}
-          />
+          <Pressable
+            onPress={handlePickAvatar}
+            disabled={uploadingAvatar}
+            style={({ pressed }) => [styles.avatarWrap, pressed && { opacity: 0.7 }]}
+          >
+            <AgentAvatar
+              firstName={profile.first_name}
+              lastName={profile.last_name}
+              avatarUrl={profile.avatar_url}
+              size={72}
+              color={BLUE}
+            />
+            {uploadingAvatar && (
+              <View style={styles.avatarOverlay}>
+                <ActivityIndicator color="#fff" />
+              </View>
+            )}
+          </Pressable>
           <Text style={[styles.name, { color: c.text }]}>{profile.first_name} {profile.last_name}</Text>
         </View>
 
@@ -173,6 +239,16 @@ const styles = StyleSheet.create({
 
   header: { alignItems: 'center', paddingVertical: 8, gap: 10 },
   name: { fontSize: 19, fontWeight: '800' },
+
+  avatarWrap: { borderRadius: 36 },
+  avatarOverlay: {
+    position: 'absolute',
+    top: 0, left: 0, right: 0, bottom: 0,
+    borderRadius: 36,
+    backgroundColor: 'rgba(0,0,0,0.45)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
 
   card: { borderRadius: 16, borderWidth: StyleSheet.hairlineWidth, padding: 16, gap: 8 },
   sectionLabel: { fontSize: 13, fontWeight: '700' },
