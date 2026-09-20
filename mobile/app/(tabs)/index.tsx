@@ -1,5 +1,6 @@
 import { View, Text, Pressable, StyleSheet, useColorScheme } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import MaterialIcons from '@expo/vector-icons/MaterialIcons';
 import { router } from 'expo-router';
 import { useViewMode, type ViewMode } from '../../lib/view-mode';
 import { CUSTOMER_COLOR, AGENT_COLOR } from '../../lib/colors';
@@ -46,17 +47,42 @@ export default function HomeScreen() {
           onPress={() => router.push('/wall')}
           style={({ pressed }) => [styles.hero, { backgroundColor: AGENT_COLOR }, pressed && styles.pressed]}
         >
-          <Text style={styles.heroTitle}>Deliver a parcel</Text>
+          <Text style={styles.heroTitle}>Deliver or drive</Text>
           <Text style={styles.heroSubtitle}>Browse The Wall and start earning</Text>
         </Pressable>
       ) : (
-        <Pressable
-          onPress={() => router.push('/post-item')}
-          style={({ pressed }) => [styles.hero, pressed && styles.pressed]}
-        >
-          <Text style={styles.heroTitle}>Post a parcel</Text>
-          <Text style={styles.heroSubtitle}>Send something from point A to point B</Text>
-        </Pressable>
+        <>
+          <Pressable
+            onPress={() => router.push('/post-item')}
+            style={({ pressed }) => [styles.hero, styles.heroSpacingTight, pressed && styles.pressed]}
+          >
+            <View style={styles.heroRow}>
+              <MaterialIcons name="inventory-2" size={26} color="#ffffff" />
+              <View style={styles.heroTextGroup}>
+                <Text style={styles.heroTitle}>Post a parcel</Text>
+                <Text style={styles.heroSubtitle}>Send something from point A to point B</Text>
+              </View>
+            </View>
+          </Pressable>
+
+          {/* Same destination as the parcel hero — ride booking now lives in
+              post-item.tsx behind the orderType toggle, and that screen
+              defaults to parcel mode regardless of entry point. Passing a
+              param to pre-select ride mode would be a nice follow-up but is
+              out of scope here. */}
+          <Pressable
+            onPress={() => router.push({ pathname: '/post-item', params: { type: 'ride' } })}
+            style={({ pressed }) => [styles.hero, styles.rideHero, { backgroundColor: c.row }, pressed && styles.pressed]}
+          >
+            <View style={styles.heroRow}>
+              <MaterialIcons name="two-wheeler" size={26} color={CUSTOMER_COLOR} />
+              <View style={styles.heroTextGroup}>
+                <Text style={[styles.heroTitle, { color: c.text }]}>Book a ride</Text>
+                <Text style={[styles.heroSubtitle, { color: c.muted }]}>Get where you're going</Text>
+              </View>
+            </View>
+          </Pressable>
+        </>
       )}
 
       {isDriver ? (
@@ -146,6 +172,11 @@ const styles = StyleSheet.create({
   },
   heroTitle: { fontSize: 24, fontWeight: '700', color: '#ffffff' },
   heroSubtitle: { fontSize: 14, color: '#dbe8fe', marginTop: 6 },
+
+  heroRow: { flexDirection: 'row', alignItems: 'center', gap: 12 },
+  heroTextGroup: { flex: 1 },
+  heroSpacingTight: { marginBottom: 10 },
+  rideHero: { borderWidth: 2, borderColor: CUSTOMER_COLOR },
 
     secondaryRow: {
     flexDirection: 'row',
