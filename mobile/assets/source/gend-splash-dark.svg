@@ -1,0 +1,11 @@
+<svg viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
+  <rect width="1024" height="1024" fill="#0f1720"/>
+  <g transform="translate(512, 397) scale(3.5)">
+    <path d="M 22 82 C 40 42 58 26 78 22" stroke="#2a3442" stroke-width="5" fill="none" stroke-linecap="round" stroke-dasharray="2 13" transform="translate(-52,-51)"/>
+    <circle cx="22" cy="82" r="12" fill="#1877F2" transform="translate(-52,-51)"/>
+    <path d="M 78 8 C 87 8 94 15 94 24 C 94 34 78 50 78 50 C 78 50 62 34 62 24 C 62 15 69 8 78 8 Z" fill="#D97757" transform="translate(-52,-51)"/>
+    <circle cx="78" cy="23" r="6" fill="#0f1720" transform="translate(-52,-51)"/>
+  </g>
+  <text x="512" y="717" font-family="sans-serif" font-size="72" font-weight="500" text-anchor="middle" fill="#ffffff">Gen-<tspan fill="#1877F2">D</tspan></text>
+  <text x="512" y="763" font-family="sans-serif" font-size="26" text-anchor="middle" fill="#8e8e93">flexible prices, delivered your way</text>
+</svg>

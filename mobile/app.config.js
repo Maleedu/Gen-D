@@ -1,6 +1,6 @@
 module.exports = {
   expo: {
-    name: "mobile",
+    name: "Gen-D",
     slug: "mobile",
     version: "1.0.0",
     orientation: "portrait",
@@ -13,7 +13,7 @@ module.exports = {
     },
     android: {
       adaptiveIcon: {
-        backgroundColor: "#E6F4FE",
+        backgroundColor: "#0f1720",
         foregroundImage: "./assets/images/android-icon-foreground.png",
         backgroundImage: "./assets/images/android-icon-background.png",
         monochromeImage: "./assets/images/android-icon-monochrome.png",
@@ -46,6 +46,7 @@ module.exports = {
           resizeMode: "contain",
           backgroundColor: "#ffffff",
           dark: {
+            image: "./assets/images/splash-icon-dark.png",
             backgroundColor: "#000000",
           },
         },
