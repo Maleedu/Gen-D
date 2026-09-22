@@ -145,6 +145,9 @@ export default function OrderTrackingScreen() {
   // Only ever populated for the customer — the agent view never shows a
   // card for themselves (see the handover doc's per-role table).
   const [agentProfile, setAgentProfile] = useState<AgentProfile | null>(null);
+  // Only ever populated for the agent — mirrors agentProfile above but for
+  // the other direction (agent contacting the customer).
+  const [customerProfile, setCustomerProfile] = useState<{ phone_number: string | null } | null>(null);
 
   // Amount payable to the agent for this order, resolved once status hits
   // 'accepted' — fixed price directly, or the accepted agent's own winning
@@ -161,15 +164,9 @@ export default function OrderTrackingScreen() {
   const [revealingOtp, setRevealingOtp] = useState(false);
   const [otpInput, setOtpInput] = useState('');
   const [verifyingOtp, setVerifyingOtp] = useState(false);
-  // Second, independent code for the delivery leg — same reveal/verify shape
-  // as the pickup OTP above, just agent-reveals/customer-verifies instead of
-  // the other way round (see get_delivery_otp / verify_delivery_seal).
-  const [deliveryOtp, setDeliveryOtp] = useState<string | null>(null);
-  const [revealingDeliveryOtp, setRevealingDeliveryOtp] = useState(false);
-  const [deliveryOtpInput, setDeliveryOtpInput] = useState('');
-  // Customer-side reveal of the photo itself — same on-demand shape as
-  // deliveryOtp above, so the customer isn't asked to attest to the seal
-  // from the text description alone.
+  // Customer-side reveal of the delivery photo itself — on-demand, so the
+  // customer isn't asked to attest to the seal from the text description
+  // alone.
   const [deliveryPhotoUrl, setDeliveryPhotoUrl] = useState<string | null>(null);
   const [loadingDeliveryPhoto, setLoadingDeliveryPhoto] = useState(false);
   // Field names currently showing a red border — cleared the moment that
@@ -251,6 +248,16 @@ export default function OrderTrackingScreen() {
         prev ? { ...prev, level_number: gami.level_number, level_label: gami.level_label, current_streak: gami.current_streak } : prev,
       );
     }
+  }, []);
+
+  const loadCustomerProfile = useCallback(async (customerId: string) => {
+    const { data, error } = await supabase
+      .from('profiles')
+      .select('phone_number')
+      .eq('id', customerId)
+      .maybeSingle();
+    if (error || !data) return;
+    setCustomerProfile(data);
   }, []);
 
   const checkPhotoExists = useCallback(async () => {
@@ -396,6 +403,7 @@ export default function OrderTrackingScreen() {
     setUserId(user.id);
 
     if (r === 'customer' && o.accepted_agent_id) loadAgentProfile(o.accepted_agent_id);
+    if (r === 'agent') loadCustomerProfile(o.customer_id);
     if (r === 'customer' && o.status === 'open' && o.pricing_mode === 'auction') loadBidSummary(orderId);
     if (o.status === 'accepted') resolvePayableAmount(o);
     if (o.status === 'picked_up') {
@@ -406,7 +414,7 @@ export default function OrderTrackingScreen() {
       loadDeliveredSummary();
       loadRatingInfo(r, user.id);
     }
-  }, [orderId, loadAgentProfile, loadBidSummary, resolvePayableAmount, checkPhotoExists, loadDeliveryPhoto, loadDeliveredSummary, loadRatingInfo]);
+  }, [orderId, loadAgentProfile, loadCustomerProfile, loadBidSummary, resolvePayableAmount, checkPhotoExists, loadDeliveryPhoto, loadDeliveredSummary, loadRatingInfo]);
 
   useEffect(() => {
     let ignore = false;
@@ -443,6 +451,7 @@ export default function OrderTrackingScreen() {
           const next = payload.new as Order;
           setOrder(next);
           if (roleRef.current === 'customer' && next.accepted_agent_id) loadAgentProfile(next.accepted_agent_id);
+          if (roleRef.current === 'agent') loadCustomerProfile(next.customer_id);
           if (next.status === 'accepted') resolvePayableAmount(next);
           if (next.status === 'picked_up') {
             checkPhotoExists();
@@ -473,7 +482,7 @@ export default function OrderTrackingScreen() {
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [orderId, loadAgentProfile, loadBidSummary, resolvePayableAmount, checkPhotoExists, loadDeliveryPhoto, loadDeliveredSummary, loadRatingInfo]);
+  }, [orderId, loadAgentProfile, loadCustomerProfile, loadBidSummary, resolvePayableAmount, checkPhotoExists, loadDeliveryPhoto, loadDeliveredSummary, loadRatingInfo]);
 
   async function handleRevealOtp() {
     if (!order) return;
@@ -485,21 +494,6 @@ export default function OrderTrackingScreen() {
       return;
     }
     setOtp(data as unknown as string);
-  }
-
-  // Agent-only, same shape as handleRevealOtp above. Only ever called once
-  // photoExists is true — get_delivery_otp's row is populated by
-  // submit_delivery_photo, not before.
-  async function handleRevealDeliveryOtp() {
-    if (!order) return;
-    setRevealingDeliveryOtp(true);
-    const { data, error } = await supabase.rpc('get_delivery_otp', { p_order_id: order.id });
-    setRevealingDeliveryOtp(false);
-    if (error) {
-      Alert.alert("Couldn't get the delivery code", error.message);
-      return;
-    }
-    setDeliveryOtp(data as unknown as string);
   }
 
   async function handleVerifyOtp() {
@@ -608,29 +602,20 @@ export default function OrderTrackingScreen() {
     ]);
   }
 
-  async function submitSeal(status: SealStatus, submittedOtp: string) {
+  async function submitSeal(status: SealStatus) {
     if (!order) return;
     setSealSubmitting(status);
-    const { data, error } = await supabase.rpc('verify_delivery_seal', {
+    const { error } = await supabase.rpc('verify_delivery_seal', {
       p_order_id: order.id,
       p_seal_status: status,
-      p_submitted_otp: submittedOtp,
     });
     setSealSubmitting(null);
     if (error) {
       Alert.alert("Couldn't record seal check", error.message);
       return;
     }
-    if (!data) {
-      // false here means the code was wrong, not a general failure — no
-      // state changed server-side, so this is retryable as-is.
-      setFieldErrors(new Set(['deliveryOtpInput']));
-      Alert.alert('Incorrect code', 'Double check the delivery code with your agent and try again.');
-      return;
-    }
     setOrder((prev) => (prev ? { ...prev, status: 'delivered' } : prev));
     setSealResult(status);
-    setDeliveryOtpInput('');
     if (status === 'broken') setComplaintStatus('open');
 
     // Best-effort only — the seal check is already recorded at this point,
@@ -656,12 +641,6 @@ export default function OrderTrackingScreen() {
   }
 
   function handleSealCheck(status: SealStatus) {
-    const code = deliveryOtpInput.trim();
-    if (!code) {
-      setFieldErrors(new Set(['deliveryOtpInput']));
-      Alert.alert('Enter the delivery code', 'Ask your agent to read out their delivery code.');
-      return;
-    }
     // Broken flips the order to delivered too (payment already happened
     // outside the app) but auto-raises a complaint — worth a confirm since
     // it can't be walked back from this screen.
@@ -671,12 +650,12 @@ export default function OrderTrackingScreen() {
         'This marks the delivery complete and flags it for admin review.',
         [
           { text: 'Cancel', style: 'cancel' },
-          { text: 'Report broken', style: 'destructive', onPress: () => submitSeal('broken', code) },
+          { text: 'Report broken', style: 'destructive', onPress: () => submitSeal('broken') },
         ],
       );
       return;
     }
-    submitSeal('intact', code);
+    submitSeal('intact');
   }
 
   // cancel_order (customer-only, RPC-enforced) allows 'open' or 'accepted'
@@ -772,6 +751,11 @@ export default function OrderTrackingScreen() {
   function handleContactAgent() {
     if (!agentProfile?.phone_number) return;
     Linking.openURL(`tel:${agentProfile.phone_number}`);
+  }
+
+  function handleContactCustomer() {
+    if (!customerProfile?.phone_number) return;
+    Linking.openURL(`tel:${customerProfile.phone_number}`);
   }
 
   function handleOpenMaps(lat: number | null, lng: number | null) {
@@ -870,6 +854,7 @@ export default function OrderTrackingScreen() {
               onContact={handleContactAgent}
               resolvedAmountPaise={resolvedAmountPaise}
               orderStatus={order.status}
+              orderId={order.id}
             />
             <View style={[styles.card, { backgroundColor: c.card, borderColor: c.border }]}>
               <MapsButton label="Open pickup location in Maps" onPress={() => handleOpenMaps(order.point_a_lat, order.point_a_lng)} />
@@ -906,6 +891,22 @@ export default function OrderTrackingScreen() {
         {order.status === 'accepted' && role === 'agent' && (
           <View style={[styles.card, { backgroundColor: c.card, borderColor: c.border }]}>
             <MapsButton label="Open pickup location in Maps" onPress={() => handleOpenMaps(order.point_a_lat, order.point_a_lng)} />
+            <Pressable
+              onPress={handleContactCustomer}
+              disabled={!customerProfile?.phone_number}
+              style={({ pressed }) => [
+                styles.secondaryButton, { borderColor: BLUE, marginTop: 10 },
+                (pressed || !customerProfile?.phone_number) && { opacity: 0.6 },
+              ]}
+            >
+              <Text style={[styles.secondaryButtonText, { color: BLUE }]}>📞 Contact</Text>
+            </Pressable>
+            <Pressable
+              onPress={() => router.push({ pathname: '/order/[id]/chat', params: { id: order.id } })}
+              style={({ pressed }) => [styles.secondaryButton, { borderColor: BLUE, marginTop: 10 }, pressed && { opacity: 0.6 }]}
+            >
+              <Text style={[styles.secondaryButtonText, { color: BLUE }]}>💬 Chat</Text>
+            </Pressable>
             <View style={[styles.divider, { backgroundColor: c.border }]} />
             <Text style={[styles.sectionLabel, { color: c.muted }]}>Enter pickup code</Text>
             <Text style={[styles.note, { color: c.muted, marginBottom: 10 }]}>
@@ -951,8 +952,8 @@ export default function OrderTrackingScreen() {
             ) : photoExists ? (
               <>
                 <Text style={[styles.note, { color: c.muted, marginBottom: 10 }]}>
-                  Your agent has submitted a delivery photo. Ask them for the delivery code, then confirm whether
-                  the seal arrived intact.
+                  Your agent has submitted a delivery photo. Check it, then confirm whether the seal arrived
+                  intact.
                 </Text>
                 {deliveryPhotoUrl ? (
                   <Image
@@ -963,26 +964,6 @@ export default function OrderTrackingScreen() {
                 ) : loadingDeliveryPhoto ? (
                   <ActivityIndicator color={BLUE} style={{ marginBottom: 12 }} />
                 ) : null}
-                <TextInput
-                  style={[
-                    styles.input,
-                    { backgroundColor: c.inputBg, color: c.text },
-                    fieldErrors.has('deliveryOtpInput') && styles.inputError,
-                  ]}
-                  value={deliveryOtpInput}
-                  onChangeText={(v) => {
-                    setDeliveryOtpInput(v);
-                    setFieldErrors((prev) => {
-                      if (!prev.has('deliveryOtpInput')) return prev;
-                      const next = new Set(prev);
-                      next.delete('deliveryOtpInput');
-                      return next;
-                    });
-                  }}
-                  placeholder="6-digit delivery code"
-                  placeholderTextColor={c.muted}
-                  keyboardType="number-pad"
-                />
                 <View style={styles.sealRow}>
                   <Pressable
                     onPress={() => handleSealCheck('intact')}
@@ -1017,6 +998,22 @@ export default function OrderTrackingScreen() {
         {order.status === 'picked_up' && role === 'agent' && (
           <View style={[styles.card, { backgroundColor: c.card, borderColor: c.border }]}>
             <MapsButton label="Open dropoff location in Maps" onPress={() => handleOpenMaps(order.point_b_lat, order.point_b_lng)} />
+            <Pressable
+              onPress={handleContactCustomer}
+              disabled={!customerProfile?.phone_number}
+              style={({ pressed }) => [
+                styles.secondaryButton, { borderColor: BLUE, marginTop: 10 },
+                (pressed || !customerProfile?.phone_number) && { opacity: 0.6 },
+              ]}
+            >
+              <Text style={[styles.secondaryButtonText, { color: BLUE }]}>📞 Contact</Text>
+            </Pressable>
+            <Pressable
+              onPress={() => router.push({ pathname: '/order/[id]/chat', params: { id: order.id } })}
+              style={({ pressed }) => [styles.secondaryButton, { borderColor: BLUE, marginTop: 10 }, pressed && { opacity: 0.6 }]}
+            >
+              <Text style={[styles.secondaryButtonText, { color: BLUE }]}>💬 Chat</Text>
+            </Pressable>
             <View style={[styles.divider, { backgroundColor: c.border }]} />
             <Text style={[styles.sectionLabel, { color: c.muted }]}>Delivery photo</Text>
             {photoExists ? (
@@ -1031,26 +1028,6 @@ export default function OrderTrackingScreen() {
                     resizeMode="cover"
                   />
                 )}
-                <View style={[styles.divider, { backgroundColor: c.border }]} />
-                <Text style={[styles.sectionLabel, { color: c.muted }]}>Delivery code</Text>
-                {deliveryOtp ? (
-                  <Text style={[styles.otpDisplay, { color: c.text }]}>{deliveryOtp}</Text>
-                ) : (
-                  <Pressable
-                    onPress={handleRevealDeliveryOtp}
-                    disabled={revealingDeliveryOtp}
-                    style={({ pressed }) => [
-                      styles.secondaryButton, { borderColor: BLUE }, (pressed || revealingDeliveryOtp) && { opacity: 0.6 },
-                    ]}
-                  >
-                    {revealingDeliveryOtp ? (
-                      <ActivityIndicator size="small" color={BLUE} />
-                    ) : (
-                      <Text style={[styles.secondaryButtonText, { color: BLUE }]}>Show delivery code</Text>
-                    )}
-                  </Pressable>
-                )}
-                <Text style={[styles.note, { color: c.muted }]}>Read this code aloud to the customer to confirm delivery.</Text>
               </>
             ) : (
               <Pressable
@@ -1156,13 +1133,14 @@ function StarPicker({ value, onChange, c }: { value: number; onChange: (n: numbe
 }
 
 function AgentCard({
-  agent, c, onContact, resolvedAmountPaise, orderStatus,
+  agent, c, onContact, resolvedAmountPaise, orderStatus, orderId,
 }: {
   agent: AgentProfile | null;
   c: Palette;
   onContact: () => void;
   resolvedAmountPaise: number | null;
   orderStatus: OrderStatus;
+  orderId: string;
 }) {
   if (!agent) {
     return (
@@ -1218,6 +1196,12 @@ function AgentCard({
         ]}
       >
         <Text style={[styles.secondaryButtonText, { color: BLUE }]}>📞 Contact</Text>
+      </Pressable>
+      <Pressable
+        onPress={() => router.push({ pathname: '/order/[id]/chat', params: { id: orderId } })}
+        style={({ pressed }) => [styles.secondaryButton, { borderColor: BLUE, marginTop: 10 }, pressed && { opacity: 0.6 }]}
+      >
+        <Text style={[styles.secondaryButtonText, { color: BLUE }]}>💬 Chat</Text>
       </Pressable>
       {upiUri && (
         <>
