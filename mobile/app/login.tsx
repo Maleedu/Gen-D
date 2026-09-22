@@ -8,6 +8,7 @@ import MaterialIcons from '@expo/vector-icons/MaterialIcons';
 import { router } from 'expo-router';
 import { supabase } from '../lib/supabase';
 import { registerForPushNotifications } from '../lib/pushNotifications';
+import { GendLogo } from '../components/gend-logo';
 
 const BLUE = '#1877F2';
 const RED = '#E41E3F';
@@ -153,6 +154,9 @@ export default function LoginScreen() {
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
       >
         <ScrollView contentContainerStyle={styles.container}>
+          <View style={{ alignItems: 'center', marginBottom: 12 }}>
+            <GendLogo size={56} />
+          </View>
           <Text style={[styles.logo, { color: c.text }]}>Gen-D</Text>
 
           <View style={[styles.modeRow, { backgroundColor: c.inputBg }]}>
