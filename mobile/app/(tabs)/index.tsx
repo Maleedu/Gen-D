@@ -4,6 +4,8 @@ import MaterialIcons from '@expo/vector-icons/MaterialIcons';
 import { router } from 'expo-router';
 import { useViewMode, type ViewMode } from '../../lib/view-mode';
 import { CUSTOMER_COLOR, AGENT_COLOR } from '../../lib/colors';
+import { ArviBubble } from '../../components/arvi-bubble';
+import { GendLogo } from '../../components/gend-logo';
 
 // Converts a '#rrggbb' hex color to an rgba() string at the given opacity —
 // used for secondaryRow's border, which needs a translucent version of
@@ -29,10 +31,8 @@ export default function HomeScreen() {
   return (
     <SafeAreaView style={[styles.container, { backgroundColor: c.bg }]}>
       <View style={styles.header}>
-        <View style={styles.routeDots}>
-          <View style={[styles.dot, { backgroundColor: CUSTOMER_COLOR }]} />
-          <View style={[styles.dotLine, { backgroundColor: c.muted }]} />
-          <View style={[styles.dot, { backgroundColor: AGENT_COLOR }]} />
+        <View style={{ marginBottom: 20 }}>
+          <GendLogo size={56} />
         </View>
         <Text style={[styles.logo, { color: c.text }]}>Gen-D</Text>
         <Text style={[styles.tagline, { color: c.muted }]}>
@@ -120,6 +120,8 @@ export default function HomeScreen() {
           </View>
         </Pressable>
       )}
+
+      <ArviBubble />
     </SafeAreaView>
   );
 }
@@ -151,9 +153,6 @@ function ModePill({
 const styles = StyleSheet.create({
   container: { flex: 1, paddingHorizontal: 24, justifyContent: 'center' },
   header: { marginBottom: 32, alignItems: 'center' },
-  routeDots: { flexDirection: 'row', alignItems: 'center', marginBottom: 20 },
-  dot: { width: 8, height: 8, borderRadius: 4 },
-  dotLine: { width: 40, height: 1.5, marginHorizontal: 6, opacity: 0.4 },
   logo: { fontSize: 32, fontWeight: '800', letterSpacing: -0.5 },
   tagline: { fontSize: 14, marginTop: 6 },
 

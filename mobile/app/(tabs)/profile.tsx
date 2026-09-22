@@ -9,6 +9,7 @@ import * as ImagePicker from 'expo-image-picker';
 import { decode } from 'base64-arraybuffer';
 import { supabase } from '../../lib/supabase';
 import { AgentAvatar } from '../../components/agent-avatar';
+import { ArviBubble } from '../../components/arvi-bubble';
 import { useViewMode } from '../../lib/view-mode';
 import { CUSTOMER_COLOR, AGENT_COLOR } from '../../lib/colors';
 
@@ -314,6 +315,8 @@ export default function CustomerProfileScreen() {
           <Text style={[styles.creditSubtext, { color: c.muted }]}>By Navajyoth Maleedu</Text>
         </View>
       </ScrollView>
+
+      <ArviBubble />
     </SafeAreaView>
   );
 }
