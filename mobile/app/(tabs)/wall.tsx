@@ -31,11 +31,15 @@ type DeliverySpeed = 'super_fast' | 'express' | 'standard';
 type PricingMode = 'fixed' | 'auction';
 type ParcelSize = 'small' | 'medium' | 'large';
 type WallMode = 'all' | 'on_my_way';
+type OrderType = 'parcel' | 'ride';
+type VehicleType = 'bike' | 'auto' | 'car';
 
 type Order = {
   id: string;
   customer_id: string;
-  item_description: string;
+  order_type: OrderType;
+  business_name: string | null;
+  item_description: string | null;
   item_category: string;
   photo_urls: string[];
   point_a_address: string;
@@ -50,6 +54,8 @@ type Order = {
   min_bid_paise: number | null;
   weight_kg: number;
   parcel_size: ParcelSize;
+  requested_vehicle_type: VehicleType | null;
+  passenger_count: number | null;
   created_at: string;
 };
 
@@ -85,9 +91,9 @@ const SPEED_META: Record<DeliverySpeed, { label: string; color: string }> = {
 };
 
 const ORDER_COLUMNS =
-  'id, customer_id, item_description, item_category, photo_urls, point_a_address, point_b_address, ' +
+  'id, customer_id, order_type, business_name, item_description, item_category, photo_urls, point_a_address, point_b_address, ' +
   'point_a_lat, point_a_lng, point_b_lat, point_b_lng, delivery_speed, pricing_mode, ' +
-  'price_paise, min_bid_paise, weight_kg, parcel_size, created_at';
+  'price_paise, min_bid_paise, weight_kg, parcel_size, requested_vehicle_type, passenger_count, created_at';
 
 const PARCEL_SIZE_LABEL: Record<ParcelSize, string> = { small: 'Small', medium: 'Medium', large: 'Large' };
 
@@ -165,6 +171,14 @@ function formatRupees(paise: number | null) {
 function formatDistance(km: number | null) {
   if (km == null) return '—';
   return km < 1 ? `${Math.round(km * 1000)} m away` : `${km.toFixed(1)} km away`;
+}
+
+function formatTripDistance(km: number) {
+  return km < 1 ? `${Math.round(km * 1000)} m trip` : `${km.toFixed(1)} km trip`;
+}
+
+function capitalize(s: string) {
+  return s.charAt(0).toUpperCase() + s.slice(1);
 }
 
 export default function WallScreen() {
@@ -836,6 +850,10 @@ function OrderCard({
   // Not affected by other agents' bids; highestBidPaise below is shown as
   // context only, not folded into the floor.
   const bidFloorPaise = order.min_bid_paise ?? 0;
+  const tripDistanceKm =
+    order.point_a_lat != null && order.point_a_lng != null && order.point_b_lat != null && order.point_b_lng != null
+      ? haversineKm(order.point_a_lat, order.point_a_lng, order.point_b_lat, order.point_b_lng)
+      : null;
 
   return (
     <View style={[styles.card, { backgroundColor: c.card, borderColor: c.border }]}>
@@ -843,7 +861,12 @@ function OrderCard({
         <View style={[styles.badge, { backgroundColor: `${speedMeta.color}22` }]}>
           <Text style={[styles.badgeText, { color: speedMeta.color }]}>{speedMeta.label}</Text>
         </View>
-        <Text style={[styles.distanceText, { color: c.muted }]}>{formatDistance(order.distanceKm)}</Text>
+        <View style={styles.distanceGroup}>
+          <Text style={[styles.distanceText, { color: c.muted }]}>{formatDistance(order.distanceKm)}</Text>
+          {tripDistanceKm != null && (
+            <Text style={[styles.tripDistanceText, { color: c.muted }]}>{formatTripDistance(tripDistanceKm)}</Text>
+          )}
+        </View>
       </View>
 
       {photo ? (
@@ -851,27 +874,62 @@ function OrderCard({
       ) : null}
 
       <View style={styles.body}>
+        {order.business_name && (
+          <View style={[styles.badge, styles.businessBadge, { backgroundColor: `${BLUE}22` }]}>
+            <Text style={[styles.badgeText, { color: BLUE }]}>{order.business_name}</Text>
+          </View>
+        )}
         <Text
           style={[styles.route, { color: c.text }, fontsLoaded && { fontFamily: HEADING_FONT_BOLD }]}
           numberOfLines={2}
         >
           {order.point_a_address} <Text style={{ color: c.muted }}>→</Text> {order.point_b_address}
         </Text>
-        <Text style={[styles.description, { color: c.muted }]} numberOfLines={3}>
-          {order.item_description}
-        </Text>
-        <View style={styles.tagRow}>
-          <View style={[styles.badge, styles.categoryBadge, { backgroundColor: `${NEUTRAL}22` }]}>
-            <Text
-              style={[styles.badgeText, { color: NEUTRAL }, fontsLoaded && { fontFamily: HEADING_FONT_SEMIBOLD }]}
-            >
-              {order.item_category.toUpperCase()}
-            </Text>
-          </View>
-          <Text style={[styles.parcelMeta, { color: c.muted }]}>
-            {formatWeight(order.weight_kg)} · {PARCEL_SIZE_LABEL[order.parcel_size]}
-          </Text>
-        </View>
+        {order.order_type === 'parcel' ? (
+          <>
+            {order.item_description ? (
+              <Text style={[styles.description, { color: c.muted }]} numberOfLines={3}>
+                {order.item_description}
+              </Text>
+            ) : null}
+            <View style={styles.tagRow}>
+              <View style={[styles.badge, styles.categoryBadge, { backgroundColor: `${NEUTRAL}22` }]}>
+                <Text
+                  style={[styles.badgeText, { color: NEUTRAL }, fontsLoaded && { fontFamily: HEADING_FONT_SEMIBOLD }]}
+                >
+                  {order.item_category.toUpperCase()}
+                </Text>
+              </View>
+              <Text style={[styles.parcelMeta, { color: c.muted }]}>
+                {formatWeight(order.weight_kg)} · {PARCEL_SIZE_LABEL[order.parcel_size]}
+              </Text>
+            </View>
+          </>
+        ) : (
+          <>
+            {order.item_description ? (
+              <Text style={[styles.description, { color: c.muted }]} numberOfLines={3}>
+                {order.item_description}
+              </Text>
+            ) : null}
+            <View style={styles.tagRow}>
+              {order.requested_vehicle_type && (
+                <View style={[styles.badge, styles.categoryBadge, { backgroundColor: `${NEUTRAL}22` }]}>
+                  <Text
+                    style={[styles.badgeText, { color: NEUTRAL }, fontsLoaded && { fontFamily: HEADING_FONT_SEMIBOLD }]}
+                  >
+                    {capitalize(order.requested_vehicle_type)}
+                  </Text>
+                </View>
+              )}
+              {order.passenger_count != null && (
+                <Text style={[styles.parcelMeta, { color: c.muted }]}>
+                  {order.passenger_count} passenger{order.passenger_count === 1 ? '' : 's'}
+                </Text>
+              )}
+            </View>
+          </>
+        )}
       </View>
 
       {order.pricing_mode === 'auction' && (myBidPaise != null || highestBidPaise != null) && (
@@ -978,11 +1036,14 @@ const styles = StyleSheet.create({
   metaRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', padding: 12 },
   badge: { paddingHorizontal: 10, paddingVertical: 4, borderRadius: 20 },
   badgeText: { fontSize: 12, fontWeight: '700' },
+  distanceGroup: { alignItems: 'flex-end', gap: 2 },
   distanceText: { fontSize: 13, fontWeight: '600' },
+  tripDistanceText: { fontSize: 11, fontWeight: '600' },
 
   photo: { width: '100%', aspectRatio: 4 / 3, backgroundColor: '#00000010' },
 
   body: { padding: 12, gap: 4 },
+  businessBadge: { alignSelf: 'flex-start', marginBottom: 2 },
   route: { fontSize: 17, fontWeight: '800', letterSpacing: -0.2, lineHeight: 22 },
   description: { fontSize: 13, fontWeight: '400', lineHeight: 18 },
   tagRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 6 },
