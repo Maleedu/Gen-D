@@ -8,6 +8,7 @@ import * as ImagePicker from 'expo-image-picker';
 import { File } from 'expo-file-system';
 import { ImageManipulator, SaveFormat } from 'expo-image-manipulator';
 import { router, Stack, useLocalSearchParams } from 'expo-router';
+import QRCode from 'react-native-qrcode-svg';
 import { supabase } from '../../../lib/supabase';
 import { fetchGamificationProfile, LEVEL_COLOR } from '../../../lib/gamification';
 import { AgentAvatar } from '../../../components/agent-avatar';
@@ -58,6 +59,7 @@ type AgentProfile = {
   completed_deliveries_count: number;
   vehicle_type: VehicleType | null;
   registration_number: string | null;
+  upi_id: string | null;
   // Optional: absent while the gamification RPC is still loading, or if it
   // fails — the card renders fine without these, they're an accent only
   // (see the agent-gamification handover doc, "Where this shows").
@@ -144,6 +146,12 @@ export default function OrderTrackingScreen() {
   // card for themselves (see the handover doc's per-role table).
   const [agentProfile, setAgentProfile] = useState<AgentProfile | null>(null);
 
+  // Amount payable to the agent for this order, resolved once status hits
+  // 'accepted' — fixed price directly, or the accepted agent's own winning
+  // bid for an auction order. Feeds the UPI pay button/QR on AgentCard;
+  // null means either not yet resolved or (auction) no matching bid found.
+  const [resolvedAmountPaise, setResolvedAmountPaise] = useState<number | null>(null);
+
   // Auction orders only, customer-only, while status is still 'open' — a
   // quick count/lowest-offer glance here; actually selecting a bid happens
   // on my-orders.tsx (see bid-selection-accept-bid-handover.md), not here.
@@ -222,10 +230,16 @@ export default function OrderTrackingScreen() {
       .order('created_at', { ascending: false })
       .limit(1)
       .maybeSingle();
+    const { data: payment } = await supabase
+      .from('agent_payment_info')
+      .select('upi_id')
+      .eq('profile_id', agentId)
+      .maybeSingle();
     setAgentProfile({
       ...profile,
       vehicle_type: (vehicle?.vehicle_type as VehicleType) ?? null,
       registration_number: vehicle?.registration_number ?? null,
+      upi_id: payment?.upi_id ?? null,
     });
     // Small accent only (level + streak) — the dedicated stats screen is
     // where the agent sees their own full gamification picture, including
@@ -253,6 +267,27 @@ export default function OrderTrackingScreen() {
     if (error || !data) return;
     const lowest = data.length > 0 ? Math.min(...data.map((b) => b.offer_paise)) : null;
     setBidSummary({ count: data.length, lowestPaise: lowest });
+  }, []);
+
+  // Resolves what the customer owes this order's accepted agent — the fixed
+  // price as-is, or (auction) that agent's own winning offer_paise off the
+  // bids table. Leaves resolvedAmountPaise null if no matching bid is found.
+  const resolvePayableAmount = useCallback(async (o: Order) => {
+    if (o.pricing_mode === 'fixed') {
+      setResolvedAmountPaise(o.price_paise);
+      return;
+    }
+    if (!o.accepted_agent_id) {
+      setResolvedAmountPaise(null);
+      return;
+    }
+    const { data } = await supabase
+      .from('bids')
+      .select('offer_paise')
+      .eq('order_id', o.id)
+      .eq('agent_id', o.accepted_agent_id)
+      .maybeSingle();
+    setResolvedAmountPaise(data?.offer_paise ?? null);
   }, []);
 
   // Both roles render it at the same size (styles.deliveryPhoto) — full-size
@@ -362,6 +397,7 @@ export default function OrderTrackingScreen() {
 
     if (r === 'customer' && o.accepted_agent_id) loadAgentProfile(o.accepted_agent_id);
     if (r === 'customer' && o.status === 'open' && o.pricing_mode === 'auction') loadBidSummary(orderId);
+    if (o.status === 'accepted') resolvePayableAmount(o);
     if (o.status === 'picked_up') {
       checkPhotoExists();
       loadDeliveryPhoto(orderId);
@@ -370,7 +406,7 @@ export default function OrderTrackingScreen() {
       loadDeliveredSummary();
       loadRatingInfo(r, user.id);
     }
-  }, [orderId, loadAgentProfile, loadBidSummary, checkPhotoExists, loadDeliveryPhoto, loadDeliveredSummary, loadRatingInfo]);
+  }, [orderId, loadAgentProfile, loadBidSummary, resolvePayableAmount, checkPhotoExists, loadDeliveryPhoto, loadDeliveredSummary, loadRatingInfo]);
 
   useEffect(() => {
     let ignore = false;
@@ -407,6 +443,7 @@ export default function OrderTrackingScreen() {
           const next = payload.new as Order;
           setOrder(next);
           if (roleRef.current === 'customer' && next.accepted_agent_id) loadAgentProfile(next.accepted_agent_id);
+          if (next.status === 'accepted') resolvePayableAmount(next);
           if (next.status === 'picked_up') {
             checkPhotoExists();
             loadDeliveryPhoto(orderId);
@@ -436,7 +473,7 @@ export default function OrderTrackingScreen() {
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [orderId, loadAgentProfile, loadBidSummary, checkPhotoExists, loadDeliveryPhoto, loadDeliveredSummary, loadRatingInfo]);
+  }, [orderId, loadAgentProfile, loadBidSummary, resolvePayableAmount, checkPhotoExists, loadDeliveryPhoto, loadDeliveredSummary, loadRatingInfo]);
 
   async function handleRevealOtp() {
     if (!order) return;
@@ -827,7 +864,13 @@ export default function OrderTrackingScreen() {
 
         {order.status === 'accepted' && role === 'customer' && (
           <>
-            <AgentCard agent={agentProfile} c={c} onContact={handleContactAgent} />
+            <AgentCard
+              agent={agentProfile}
+              c={c}
+              onContact={handleContactAgent}
+              resolvedAmountPaise={resolvedAmountPaise}
+              orderStatus={order.status}
+            />
             <View style={[styles.card, { backgroundColor: c.card, borderColor: c.border }]}>
               <MapsButton label="Open pickup location in Maps" onPress={() => handleOpenMaps(order.point_a_lat, order.point_a_lng)} />
               <View style={[styles.divider, { backgroundColor: c.border }]} />
@@ -1112,7 +1155,15 @@ function StarPicker({ value, onChange, c }: { value: number; onChange: (n: numbe
   );
 }
 
-function AgentCard({ agent, c, onContact }: { agent: AgentProfile | null; c: Palette; onContact: () => void }) {
+function AgentCard({
+  agent, c, onContact, resolvedAmountPaise, orderStatus,
+}: {
+  agent: AgentProfile | null;
+  c: Palette;
+  onContact: () => void;
+  resolvedAmountPaise: number | null;
+  orderStatus: OrderStatus;
+}) {
   if (!agent) {
     return (
       <View style={[styles.card, { backgroundColor: c.card, borderColor: c.border }]}>
@@ -1121,6 +1172,20 @@ function AgentCard({ agent, c, onContact }: { agent: AgentProfile | null; c: Pal
     );
   }
   const vehicleLabel = agent.vehicle_type ? VEHICLE_LABEL[agent.vehicle_type] : '';
+  const upiUri =
+    agent.upi_id && resolvedAmountPaise != null && orderStatus === 'accepted'
+      ? `upi://pay?pa=${encodeURIComponent(agent.upi_id)}&pn=${encodeURIComponent(`${agent.first_name} ${agent.last_name}`)}&am=${(resolvedAmountPaise / 100).toFixed(2)}&cu=INR&tn=${encodeURIComponent('Gen-D order')}`
+      : null;
+
+  async function handlePayViaUpi() {
+    if (!upiUri) return;
+    try {
+      await Linking.openURL(upiUri);
+    } catch {
+      Alert.alert('No UPI app found', 'Install a UPI payment app to pay directly, or use the QR code below.');
+    }
+  }
+
   return (
     <View style={[styles.card, { backgroundColor: c.card, borderColor: c.border }]}>
       <View style={styles.agentRow}>
@@ -1154,6 +1219,20 @@ function AgentCard({ agent, c, onContact }: { agent: AgentProfile | null; c: Pal
       >
         <Text style={[styles.secondaryButtonText, { color: BLUE }]}>📞 Contact</Text>
       </Pressable>
+      {upiUri && (
+        <>
+          <Pressable
+            onPress={handlePayViaUpi}
+            style={({ pressed }) => [styles.secondaryButton, { borderColor: GREEN, marginTop: 10 }, pressed && { opacity: 0.6 }]}
+          >
+            <Text style={[styles.secondaryButtonText, { color: GREEN }]}>💳 Pay via UPI</Text>
+          </Pressable>
+          <View style={styles.qrWrap}>
+            <QRCode value={upiUri} size={180} />
+            <Text style={[styles.qrCaption, { color: c.muted }]}>Or scan to pay</Text>
+          </View>
+        </>
+      )}
     </View>
   );
 }
@@ -1216,4 +1295,6 @@ const styles = StyleSheet.create({
   agentMeta: { fontSize: 12, marginTop: 2 },
   levelPill: { paddingHorizontal: 8, paddingVertical: 2, borderRadius: 20 },
   levelPillText: { fontSize: 11, fontWeight: '700' },
+  qrWrap: { alignItems: 'center', marginTop: 14, gap: 6 },
+  qrCaption: { fontSize: 12 },
 });

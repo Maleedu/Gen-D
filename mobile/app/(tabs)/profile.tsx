@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import {
   View, Text, Pressable, StyleSheet, useColorScheme, Alert,
-  ScrollView, RefreshControl, ActivityIndicator,
+  ScrollView, RefreshControl, ActivityIndicator, TextInput,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
@@ -25,7 +25,7 @@ type Profile = {
 
 type Palette = {
   bg: string; text: string; muted: string;
-  card: string; border: string;
+  card: string; border: string; inputBg: string;
 };
 
 // Customer-facing profile — separate from the agent-facing Progress screen
@@ -40,6 +40,7 @@ export default function CustomerProfileScreen() {
     muted: isDark ? '#8e8e93' : '#6b7280',
     card: isDark ? '#161616' : '#ffffff',
     border: isDark ? '#2e2e32' : '#e5e7eb',
+    inputBg: isDark ? '#1a1a1a' : '#f5f6f8',
   };
   // Mode-reactive accent — CUSTOMER_COLOR in customer mode, AGENT_COLOR in
   // driver mode. The KYC card only ever renders in driver mode, so this
@@ -49,11 +50,14 @@ export default function CustomerProfileScreen() {
 
   const [profile, setProfile] = useState<Profile | null>(null);
   const [email, setEmail] = useState<string | null>(null);
+  const [userId, setUserId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [loggingOut, setLoggingOut] = useState(false);
   const [uploadingAvatar, setUploadingAvatar] = useState(false);
+  const [upiInput, setUpiInput] = useState('');
+  const [savingUpi, setSavingUpi] = useState(false);
 
   const load = useCallback(async () => {
     setLoadError(null);
@@ -66,6 +70,7 @@ export default function CustomerProfileScreen() {
     // exposed for a client-side join, but getUser() already returns the
     // caller's own email, which is all "my profile" ever needs.
     setEmail(user.email ?? null);
+    setUserId(user.id);
     const { data, error } = await supabase
       .from('profiles')
       .select('first_name, last_name, avatar_url, phone_number, is_agent_verified')
@@ -76,6 +81,13 @@ export default function CustomerProfileScreen() {
       return;
     }
     setProfile(data as Profile);
+
+    const { data: paymentInfo } = await supabase
+      .from('agent_payment_info')
+      .select('upi_id')
+      .eq('profile_id', user.id)
+      .maybeSingle();
+    setUpiInput(paymentInfo?.upi_id ?? '');
   }, []);
 
   useEffect(() => {
@@ -104,6 +116,25 @@ export default function CustomerProfileScreen() {
       return;
     }
     router.replace('/login');
+  }
+
+  async function handleSaveUpi() {
+    if (!userId) return;
+    const trimmed = upiInput.trim();
+    if (!trimmed) {
+      Alert.alert('Enter a UPI ID', 'Add your UPI ID so customers can pay you directly.');
+      return;
+    }
+    setSavingUpi(true);
+    const { error } = await supabase
+      .from('agent_payment_info')
+      .upsert({ profile_id: userId, upi_id: trimmed, updated_at: new Date().toISOString() });
+    setSavingUpi(false);
+    if (error) {
+      Alert.alert("Couldn't save UPI ID", error.message);
+      return;
+    }
+    setUpiInput(trimmed);
   }
 
   async function handlePickAvatar() {
@@ -235,6 +266,29 @@ export default function CustomerProfileScreen() {
           )
         )}
 
+        {mode === 'driver' && (
+          <View style={[styles.card, { backgroundColor: c.card, borderColor: c.border }]}>
+            <Text style={[styles.sectionLabel, { color: c.muted }]}>Payment details</Text>
+            <Text style={[styles.inputLabel, { color: c.muted }]}>UPI ID</Text>
+            <TextInput
+              style={[styles.input, { backgroundColor: c.inputBg, color: c.text }]}
+              value={upiInput}
+              onChangeText={setUpiInput}
+              placeholder="yourname@bank"
+              placeholderTextColor={c.muted}
+              autoCapitalize="none"
+              autoCorrect={false}
+            />
+            <Pressable
+              onPress={handleSaveUpi}
+              disabled={savingUpi}
+              style={({ pressed }) => [styles.primaryButton, { backgroundColor: accent, marginTop: 10 }, (pressed || savingUpi) && { opacity: 0.7 }]}
+            >
+              <Text style={styles.primaryButtonText}>{savingUpi ? 'Saving…' : 'Save'}</Text>
+            </Pressable>
+          </View>
+        )}
+
         <Pressable
           onPress={() => router.push('/my-orders')}
           style={({ pressed }) => [styles.secondaryButton, { borderColor: accent }, pressed && { opacity: 0.6 }]}
@@ -292,6 +346,8 @@ const styles = StyleSheet.create({
   card: { borderRadius: 16, borderWidth: StyleSheet.hairlineWidth, padding: 16, gap: 8 },
   sectionLabel: { fontSize: 13, fontWeight: '700' },
   contactLine: { fontSize: 14 },
+  inputLabel: { fontSize: 12, fontWeight: '600', marginTop: 2 },
+  input: { borderRadius: 12, padding: 14, fontSize: 15, marginTop: 6 },
 
   kycBadge: { borderRadius: 12, borderWidth: StyleSheet.hairlineWidth, paddingVertical: 13, alignItems: 'center' },
   kycBadgeText: { fontSize: 14, fontWeight: '700' },
