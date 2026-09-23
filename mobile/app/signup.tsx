@@ -48,6 +48,7 @@ export default function SignupScreen() {
   const [form, setForm] = useState({
     firstName: '', lastName: '', dob: '', phone: '', email: '',
     password: '', retypePassword: '', address: '', landmark: '', occupation: '',
+    referralCode: '',
   });
   const [isBusiness, setIsBusiness] = useState(false);
   const [companyName, setCompanyName] = useState('');
@@ -173,6 +174,9 @@ export default function SignupScreen() {
       Alert.alert('Signup failed', error.message);
       return;
     }
+    if (form.referralCode.trim()) {
+      await supabase.rpc('record_referral_signup', { p_referral_code: form.referralCode.trim() });
+    }
     await requestPhoneVerification();
   }
 
@@ -251,6 +255,7 @@ export default function SignupScreen() {
           <Field label="Address" value={form.address} onChangeText={(v) => update('address', v)} c={c} error={fieldErrors.has('address')} />
           <Field label="Landmark" value={form.landmark} onChangeText={(v) => update('landmark', v)} c={c} error={fieldErrors.has('landmark')} />
           <Field label="Occupation" value={form.occupation} onChangeText={(v) => update('occupation', v)} c={c} error={fieldErrors.has('occupation')} />
+          <Field label="Referral code (optional)" value={form.referralCode} onChangeText={(v) => update('referralCode', v.toUpperCase())} autoCapitalize="characters" maxLength={8} c={c} />
 
           <View style={styles.switchRow}>
             <Switch value={isBusiness} onValueChange={setIsBusiness} trackColor={{ true: c.text }} />
@@ -291,7 +296,7 @@ function Field(props: {
   label: string; value: string; onChangeText: (v: string) => void;
   placeholder?: string; secureTextEntry?: boolean;
   keyboardType?: 'default' | 'email-address' | 'phone-pad' | 'number-pad';
-  autoCapitalize?: 'none' | 'sentences';
+  autoCapitalize?: 'none' | 'sentences' | 'characters';
   prefix?: string;
   maxLength?: number;
   c: { text: string; muted: string; inputBg: string };

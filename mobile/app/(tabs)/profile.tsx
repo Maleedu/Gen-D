@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import {
   View, Text, Pressable, StyleSheet, useColorScheme, Alert,
-  ScrollView, RefreshControl, ActivityIndicator, TextInput,
+  ScrollView, RefreshControl, ActivityIndicator, TextInput, Share,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
@@ -21,6 +21,7 @@ type Profile = {
   avatar_url: string | null;
   phone_number: string | null;
   is_agent_verified: boolean;
+  wallet_balance_paise: number;
 };
 
 type Palette = {
@@ -54,6 +55,17 @@ export default function CustomerProfileScreen() {
   const [uploadingAvatar, setUploadingAvatar] = useState(false);
   const [upiInput, setUpiInput] = useState('');
   const [savingUpi, setSavingUpi] = useState(false);
+  const referralCode = userId ? userId.replace(/-/g, '').slice(0, 8).toUpperCase() : '';
+
+  async function handleShareReferralCode() {
+    try {
+      await Share.share({
+        message: `Join Gen-D and use my referral code ${referralCode} when you sign up!`,
+      });
+    } catch {
+      // Best-effort — a failed/cancelled share sheet needs no error handling.
+    }
+  }
 
   const load = useCallback(async () => {
     setLoadError(null);
@@ -69,7 +81,7 @@ export default function CustomerProfileScreen() {
     setUserId(user.id);
     const { data, error } = await supabase
       .from('profiles')
-      .select('first_name, last_name, avatar_url, phone_number, is_agent_verified')
+      .select('first_name, last_name, avatar_url, phone_number, is_agent_verified, wallet_balance_paise')
       .eq('id', user.id)
       .maybeSingle();
     if (error) {
@@ -244,6 +256,21 @@ export default function CustomerProfileScreen() {
           )}
         </View>
 
+        <View style={[styles.card, { backgroundColor: c.card, borderColor: c.border }]}>
+          <Text style={[styles.sectionLabel, { color: c.muted }]}>Referrals & Wallet</Text>
+          <Text style={[styles.walletBalance, { color: c.text }]}>₹{(profile.wallet_balance_paise / 100).toFixed(2)}</Text>
+          <Text style={[styles.contactLine, { color: c.muted }]}>Share your code — earn wallet credit when they complete their first order.</Text>
+          <View style={styles.referralRow}>
+            <Text style={[styles.referralCode, { color: c.text }]}>{referralCode}</Text>
+            <Pressable
+              onPress={handleShareReferralCode}
+              style={({ pressed }) => [styles.referralShareButton, { borderColor: accent }, pressed && { opacity: 0.6 }]}
+            >
+              <Text style={[styles.referralShareButtonText, { color: accent }]}>Share</Text>
+            </Pressable>
+          </View>
+        </View>
+
         {mode === 'driver' && (
           profile.is_agent_verified ? (
             <Pressable
@@ -344,6 +371,11 @@ const styles = StyleSheet.create({
   card: { borderRadius: 16, borderWidth: StyleSheet.hairlineWidth, padding: 16, gap: 8 },
   sectionLabel: { fontSize: 13, fontWeight: '700' },
   contactLine: { fontSize: 14 },
+  walletBalance: { fontSize: 24, fontWeight: '800', marginTop: 2 },
+  referralRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 8 },
+  referralCode: { fontSize: 18, fontWeight: '800', letterSpacing: 2 },
+  referralShareButton: { borderRadius: 10, borderWidth: 1.5, paddingVertical: 8, paddingHorizontal: 16 },
+  referralShareButtonText: { fontSize: 13, fontWeight: '700' },
   inputLabel: { fontSize: 12, fontWeight: '600', marginTop: 2 },
   input: { borderRadius: 12, padding: 14, fontSize: 15, marginTop: 6 },
 
