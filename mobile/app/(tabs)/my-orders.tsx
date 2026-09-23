@@ -8,6 +8,7 @@ import { router } from 'expo-router';
 import { supabase } from '../../lib/supabase';
 import { AgentAvatar } from '../../components/agent-avatar';
 import { useViewMode, type ViewMode } from '../../lib/view-mode';
+import { AGENT_COLOR, CUSTOMER_COLOR } from '../../lib/colors';
 import { EXPLAINER_BANNER_KEYS, useExplainerBanner } from '../../lib/explainer-banners';
 import { ExplainerBanner } from '../../components/explainer-banner';
 
@@ -79,6 +80,7 @@ function formatRupees(paise: number | null) {
 export default function MyOrdersScreen() {
   const isDark = useColorScheme() === 'dark';
   const { mode } = useViewMode();
+  const accent = mode === 'driver' ? AGENT_COLOR : CUSTOMER_COLOR;
   const c: Palette = {
     bg: isDark ? '#000000' : '#ffffff',
     text: isDark ? '#ffffff' : '#0f1720',
@@ -269,7 +271,7 @@ export default function MyOrdersScreen() {
   if (loading) {
     return (
       <SafeAreaView style={[styles.container, { backgroundColor: c.bg }]}>
-        <BackButton />
+        <BackButton accent={accent} />
         <View style={styles.centerFill}>
           <ActivityIndicator color={BLUE} />
         </View>
@@ -283,7 +285,7 @@ export default function MyOrdersScreen() {
       <SafeAreaView style={[styles.container, { backgroundColor: c.bg }]} edges={['top', 'left', 'right']}>
         <View style={styles.reviewHeader}>
           <Pressable onPress={() => setReviewingOrderId(null)} hitSlop={8}>
-            <Text style={[styles.backText, { color: BLUE }]}>‹ Back</Text>
+            <Text style={[styles.backText, { color: accent }]}>‹ Back</Text>
           </Pressable>
           <Text style={[styles.reviewTitle, { color: c.text }]} numberOfLines={1}>
             {reviewedOrder?.item_description ?? 'Review bids'}
@@ -335,7 +337,7 @@ export default function MyOrdersScreen() {
 
   return (
     <SafeAreaView style={[styles.container, { backgroundColor: c.bg }]} edges={['top', 'left', 'right']}>
-      <BackButton />
+      <BackButton accent={accent} />
       <View style={styles.header}>
         <Text style={[styles.headerTitle, { color: c.text }]}>{mode === 'driver' ? 'My Deliveries' : 'My Orders'}</Text>
       </View>
@@ -417,11 +419,11 @@ function BidRow({
   );
 }
 
-function BackButton() {
+function BackButton({ accent }: { accent: string }) {
   return (
     <View style={styles.backRow}>
       <Pressable onPress={() => router.replace('/')} hitSlop={8}>
-        <Text style={[styles.backText, { color: BLUE }]}>‹ Back</Text>
+        <Text style={[styles.backText, { color: accent }]}>‹ Back</Text>
       </Pressable>
     </View>
   );

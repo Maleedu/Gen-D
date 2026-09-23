@@ -10,7 +10,6 @@ import { ImageManipulator, SaveFormat } from 'expo-image-manipulator';
 import { router, Stack } from 'expo-router';
 import { supabase } from '../lib/supabase';
 
-const BLUE = '#1877F2';
 const RED = '#E41E3F';
 const AMBER = '#B7791F';
 const GREEN = '#1F9254';
@@ -54,6 +53,7 @@ export default function KycScreen() {
     card: isDark ? '#161616' : '#ffffff',
     border: isDark ? '#2e2e32' : '#e5e7eb',
   };
+  const accent = c.text;
 
   const [userId, setUserId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -197,7 +197,7 @@ export default function KycScreen() {
       <SafeAreaView style={[styles.container, { backgroundColor: c.bg }]}>
         <Stack.Screen options={{ title: 'KYC Verification' }} />
         <View style={styles.centerFill}>
-          <ActivityIndicator color={BLUE} />
+          <ActivityIndicator color={accent} />
         </View>
       </SafeAreaView>
     );
@@ -219,7 +219,7 @@ export default function KycScreen() {
       <Stack.Screen options={{ title: 'KYC Verification' }} />
       <ScrollView
         contentContainerStyle={styles.scroll}
-        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={BLUE} colors={[BLUE]} />}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={accent} colors={[accent]} />}
       >
         <Text style={[styles.title, { color: c.text }]}>Verify your KYC</Text>
 
@@ -240,14 +240,14 @@ export default function KycScreen() {
                   disabled={isUploading}
                   style={({ pressed }) => [
                     styles.secondaryButton,
-                    { borderColor: BLUE },
+                    { borderColor: accent },
                     (pressed || isUploading) && { opacity: 0.6 },
                   ]}
                 >
                   {isUploading ? (
-                    <ActivityIndicator size="small" color={BLUE} />
+                    <ActivityIndicator size="small" color={accent} />
                   ) : (
-                    <Text style={[styles.secondaryButtonText, { color: BLUE }]}>
+                    <Text style={[styles.secondaryButtonText, { color: accent }]}>
                       {status === 'rejected' ? 'Resubmit' : 'Upload'}
                     </Text>
                   )}

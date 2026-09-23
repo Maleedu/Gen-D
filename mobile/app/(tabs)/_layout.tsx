@@ -11,7 +11,6 @@ import { AGENT_COLOR, CUSTOMER_COLOR } from '@/lib/colors';
 export default function TabLayout() {
   const colorScheme = useColorScheme() === 'dark' ? 'dark' : 'light';
   const { mode } = useViewMode();
-  const modeLineColor = mode === 'driver' ? AGENT_COLOR : CUSTOMER_COLOR;
 
   // `href: null` hides a tab without unmounting its route, so switching
   // modes back and forth never loses screen state (see the customer-driver
@@ -20,10 +19,9 @@ export default function TabLayout() {
   return (
     <Tabs
       screenOptions={{
-        tabBarActiveTintColor: Colors[colorScheme].tint,
+        tabBarActiveTintColor: mode === 'driver' ? AGENT_COLOR : CUSTOMER_COLOR,
         headerShown: false,
         tabBarButton: HapticTab,
-        tabBarStyle: { borderBottomWidth: 4, borderBottomColor: modeLineColor },
       }}>
       <Tabs.Screen
         name="index"

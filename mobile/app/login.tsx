@@ -9,8 +9,9 @@ import { router } from 'expo-router';
 import { supabase } from '../lib/supabase';
 import { registerForPushNotifications } from '../lib/pushNotifications';
 import { GendLogo } from '../components/gend-logo';
+import { useViewMode } from '../lib/view-mode';
+import { AGENT_COLOR, CUSTOMER_COLOR } from '../lib/colors';
 
-const BLUE = '#1877F2';
 const RED = '#E41E3F';
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -19,6 +20,8 @@ type LoginTab = 'email' | 'phone';
 
 export default function LoginScreen() {
   const isDark = useColorScheme() === 'dark';
+  const { mode } = useViewMode();
+  const accent = mode === 'driver' ? AGENT_COLOR : CUSTOMER_COLOR;
   const c = {
     bg: isDark ? '#000000' : '#ffffff',
     text: isDark ? '#ffffff' : '#0f1720',
@@ -145,7 +148,7 @@ export default function LoginScreen() {
     <SafeAreaView style={[styles.safeArea, { backgroundColor: c.bg }]}>
       <View style={styles.header}>
         <Pressable onPress={() => router.replace('/')} hitSlop={8}>
-          <Text style={[styles.backText, { color: BLUE }]}>‹ Back</Text>
+          <Text style={[styles.backText, { color: accent }]}>‹ Back</Text>
         </Pressable>
       </View>
 
@@ -160,8 +163,8 @@ export default function LoginScreen() {
           <Text style={[styles.logo, { color: c.text }]}>Gen-D</Text>
 
           <View style={[styles.modeRow, { backgroundColor: c.inputBg }]}>
-            <ModePill label="Email" active={tab === 'email'} onPress={() => switchTab('email')} c={c} />
-            <ModePill label="Phone" active={tab === 'phone'} onPress={() => switchTab('phone')} c={c} />
+            <ModePill label="Email" active={tab === 'email'} onPress={() => switchTab('email')} c={c} accent={accent} />
+            <ModePill label="Phone" active={tab === 'phone'} onPress={() => switchTab('phone')} c={c} accent={accent} />
           </View>
 
           {tab === 'email' ? (
@@ -201,19 +204,19 @@ export default function LoginScreen() {
               </View>
 
               <Pressable onPress={() => router.push('/forgot-password')} hitSlop={4}>
-                <Text style={[styles.forgotLink, { color: BLUE }]}>Forgot password?</Text>
+                <Text style={[styles.forgotLink, { color: accent }]}>Forgot password?</Text>
               </Pressable>
 
               <Pressable
-                style={({ pressed }) => [styles.button, pressed && { opacity: 0.85 }]}
+                style={({ pressed }) => [styles.button, { borderColor: accent }, pressed && { opacity: 0.85 }]}
                 onPress={handleLogin}
                 disabled={submitting}
               >
-                <Text style={styles.buttonText}>{submitting ? 'Logging in…' : 'Log in'}</Text>
+                <Text style={[styles.buttonText, { color: accent }]}>{submitting ? 'Logging in…' : 'Log in'}</Text>
               </Pressable>
 
               <Pressable onPress={() => router.push('/signup')}>
-                <Text style={[styles.signupLinkBig, { color: BLUE }]}>New to Gen-D? Sign up</Text>
+                <Text style={[styles.signupLinkBig, { color: accent }]}>New to Gen-D? Sign up</Text>
               </Pressable>
             </>
           ) : phoneStep === 'request' ? (
@@ -239,15 +242,15 @@ export default function LoginScreen() {
               </View>
 
               <Pressable
-                style={({ pressed }) => [styles.button, pressed && { opacity: 0.85 }]}
+                style={({ pressed }) => [styles.button, { borderColor: accent }, pressed && { opacity: 0.85 }]}
                 onPress={handleSendCode}
                 disabled={submitting}
               >
-                <Text style={styles.buttonText}>{submitting ? 'Sending…' : 'Send code'}</Text>
+                <Text style={[styles.buttonText, { color: accent }]}>{submitting ? 'Sending…' : 'Send code'}</Text>
               </Pressable>
 
               <Pressable onPress={() => router.push('/signup')}>
-                <Text style={[styles.signupLinkBig, { color: BLUE }]}>New to Gen-D? Sign up</Text>
+                <Text style={[styles.signupLinkBig, { color: accent }]}>New to Gen-D? Sign up</Text>
               </Pressable>
             </>
           ) : (
@@ -272,15 +275,15 @@ export default function LoginScreen() {
               />
 
               <Pressable
-                style={({ pressed }) => [styles.button, pressed && { opacity: 0.85 }]}
+                style={({ pressed }) => [styles.button, { borderColor: accent }, pressed && { opacity: 0.85 }]}
                 onPress={handleVerifyPhoneOtp}
                 disabled={submitting}
               >
-                <Text style={styles.buttonText}>{submitting ? 'Verifying…' : 'Verify'}</Text>
+                <Text style={[styles.buttonText, { color: accent }]}>{submitting ? 'Verifying…' : 'Verify'}</Text>
               </Pressable>
 
               <Pressable onPress={handleSendCode} disabled={submitting}>
-                <Text style={[styles.link, { color: BLUE }]}>Resend code</Text>
+                <Text style={[styles.link, { color: accent }]}>Resend code</Text>
               </Pressable>
 
               <Pressable onPress={() => setPhoneStep('request')} disabled={submitting}>
@@ -295,14 +298,11 @@ export default function LoginScreen() {
 }
 
 function ModePill({
-  label, active, onPress, c,
-}: { label: string; active: boolean; onPress: () => void; c: { text: string } }) {
+  label, active, onPress, c, accent,
+}: { label: string; active: boolean; onPress: () => void; c: { text: string }; accent: string }) {
   return (
-    <Pressable
-      onPress={onPress}
-      style={[styles.modePill, active && { backgroundColor: BLUE }]}
-    >
-      <Text style={[styles.modePillText, { color: active ? '#ffffff' : c.text }]}>{label}</Text>
+    <Pressable onPress={onPress} style={styles.modePill}>
+      <Text style={[styles.modePillText, { color: active ? accent : c.text, fontWeight: active ? '800' : '700' }]}>{label}</Text>
     </Pressable>
   );
 }
@@ -331,8 +331,8 @@ const styles = StyleSheet.create({
   inputPrefix: { fontSize: 16, marginRight: 6 },
   inputFlex: { flex: 1, paddingVertical: 14, fontSize: 16 },
   note: { fontSize: 14, textAlign: 'center', marginTop: 16 },
-  button: { backgroundColor: BLUE, borderRadius: 14, padding: 17, marginTop: 32, alignItems: 'center' },
-  buttonText: { color: '#ffffff', fontSize: 16, fontWeight: '700' },
+  button: { backgroundColor: 'transparent', borderWidth: 1.5, borderRadius: 14, padding: 17, marginTop: 32, alignItems: 'center' },
+  buttonText: { fontSize: 16, fontWeight: '700' },
   link: { textAlign: 'center', marginTop: 22, fontSize: 14, fontWeight: '600' },
   signupLinkBig: {
     textAlign: 'center',

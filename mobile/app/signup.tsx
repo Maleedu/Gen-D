@@ -9,7 +9,6 @@ import { router } from 'expo-router';
 import { supabase } from '../lib/supabase';
 import { GendLogo } from '../components/gend-logo';
 
-const BLUE = '#1877F2';
 const RED = '#E41E3F';
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -21,8 +20,24 @@ const REQUIRED_FORM_FIELDS = [
   'password', 'retypePassword', 'address', 'landmark', 'occupation',
 ] as const;
 
+function formatDob(raw: string): string {
+  const digits = raw.replace(/\D/g, '').slice(0, 8);
+  const day = digits.slice(0, 2);
+  const month = digits.slice(2, 4);
+  const year = digits.slice(4, 8);
+  if (digits.length <= 2) return day;
+  if (digits.length <= 4) return `${day}-${month}`;
+  return `${day}-${month}-${year}`;
+}
+function dobToIso(displayDob: string): string {
+  const [day, month, year] = displayDob.split('-');
+  if (!day || !month || !year || year.length !== 4) return displayDob;
+  return `${year}-${month}-${day}`;
+}
+
 export default function SignupScreen() {
   const isDark = useColorScheme() === 'dark';
+  const [justSucceeded, setJustSucceeded] = useState(false);
   const c = {
     bg: isDark ? '#000000' : '#ffffff',
     text: isDark ? '#ffffff' : '#0f1720',
@@ -64,8 +79,10 @@ export default function SignupScreen() {
   }
 
   function finishSignup() {
-    Alert.alert('Welcome to Gen-D', 'Your account has been created.');
-    router.replace('/login');
+    setJustSucceeded(true);
+    setTimeout(() => {
+      router.replace('/login');
+    }, 700);
   }
 
   // Verifying the phone number as a Supabase Auth identity right after
@@ -140,7 +157,7 @@ export default function SignupScreen() {
         data: {
           first_name: form.firstName,
           last_name: form.lastName,
-          date_of_birth: form.dob,
+          date_of_birth: dobToIso(form.dob),
           phone_number: form.phone,
           address: form.address,
           landmark: form.landmark,
@@ -183,15 +200,15 @@ export default function SignupScreen() {
             />
 
             <Pressable
-              style={({ pressed }) => [styles.button, pressed && { opacity: 0.85 }]}
+              style={({ pressed }) => [styles.button, { borderColor: c.text }, pressed && { opacity: 0.85 }]}
               onPress={handleVerifyOtp}
               disabled={submitting}
             >
-              <Text style={styles.buttonText}>{submitting ? 'Verifying…' : 'Verify'}</Text>
+              <Text style={[styles.buttonText, { color: c.text }]}>{submitting ? 'Verifying…' : 'Verify'}</Text>
             </Pressable>
 
             <Pressable onPress={requestPhoneVerification} disabled={submitting}>
-              <Text style={[styles.link, { color: BLUE }]}>Resend code</Text>
+              <Text style={[styles.link, { color: c.text }]}>Resend code</Text>
             </Pressable>
 
             <Pressable onPress={finishSignup} disabled={submitting}>
@@ -217,7 +234,7 @@ export default function SignupScreen() {
 
           <Field label="First name" value={form.firstName} onChangeText={(v) => update('firstName', v)} c={c} error={fieldErrors.has('firstName')} />
           <Field label="Last name" value={form.lastName} onChangeText={(v) => update('lastName', v)} c={c} error={fieldErrors.has('lastName')} />
-          <Field label="Date of birth" value={form.dob} onChangeText={(v) => update('dob', v)} placeholder="YYYY-MM-DD" c={c} error={fieldErrors.has('dob')} />
+          <Field label="Date of birth" value={form.dob} onChangeText={(v) => update('dob', formatDob(v))} placeholder="DD-MM-YYYY" keyboardType="number-pad" maxLength={10} c={c} error={fieldErrors.has('dob')} />
           <Field
             label="Phone number"
             value={form.phone}
@@ -236,7 +253,7 @@ export default function SignupScreen() {
           <Field label="Occupation" value={form.occupation} onChangeText={(v) => update('occupation', v)} c={c} error={fieldErrors.has('occupation')} />
 
           <View style={styles.switchRow}>
-            <Switch value={isBusiness} onValueChange={setIsBusiness} trackColor={{ true: BLUE }} />
+            <Switch value={isBusiness} onValueChange={setIsBusiness} trackColor={{ true: c.text }} />
             <Text style={[styles.switchLabel, { color: c.text }]}>I&apos;m signing up as a business</Text>
           </View>
 
@@ -251,18 +268,18 @@ export default function SignupScreen() {
           )}
 
           <View style={styles.switchRow}>
-            <Switch value={agreed} onValueChange={setAgreed} trackColor={{ true: BLUE }} />
+            <Switch value={agreed} onValueChange={setAgreed} trackColor={{ true: c.text }} />
             <Text style={[styles.switchLabel, { color: c.muted }]}>
               I agree to the Terms & Conditions and User Agreement
             </Text>
           </View>
 
           <Pressable
-            style={({ pressed }) => [styles.button, pressed && { opacity: 0.85 }]}
+            style={({ pressed }) => [styles.button, { borderColor: justSucceeded ? '#1F9254' : c.text }, pressed && { opacity: 0.85 }]}
             onPress={handleSignup}
             disabled={submitting}
           >
-            <Text style={styles.buttonText}>{submitting ? 'Creating account…' : 'Sign up'}</Text>
+            <Text style={[styles.buttonText, { color: justSucceeded ? '#1F9254' : c.text }]}>{submitting ? 'Creating account…' : 'Sign up'}</Text>
           </Pressable>
         </ScrollView>
       </KeyboardAvoidingView>
@@ -351,7 +368,7 @@ const styles = StyleSheet.create({
   eyeButton: { position: 'absolute', top: 0, bottom: 0, right: 12, justifyContent: 'center' },
   switchRow: { flexDirection: 'row', alignItems: 'center', gap: 12, marginTop: 14, marginBottom: 4 },
   switchLabel: { flex: 1, fontSize: 14 },
-  button: { backgroundColor: BLUE, borderRadius: 14, padding: 17, marginTop: 28, alignItems: 'center' },
-  buttonText: { color: '#ffffff', fontSize: 16, fontWeight: '700' },
+  button: { backgroundColor: 'transparent', borderWidth: 1.5, borderRadius: 14, padding: 17, marginTop: 28, alignItems: 'center' },
+  buttonText: { fontSize: 16, fontWeight: '700' },
   link: { textAlign: 'center', marginTop: 16, fontSize: 14, fontWeight: '600' },
 });

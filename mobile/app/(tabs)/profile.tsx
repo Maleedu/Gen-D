@@ -11,7 +11,6 @@ import { supabase } from '../../lib/supabase';
 import { AgentAvatar } from '../../components/agent-avatar';
 import { ArviBubble } from '../../components/arvi-bubble';
 import { useViewMode } from '../../lib/view-mode';
-import { CUSTOMER_COLOR, AGENT_COLOR } from '../../lib/colors';
 
 const RED = '#E41E3F';
 const GREEN = '#1F9254';
@@ -43,13 +42,7 @@ export default function CustomerProfileScreen() {
     border: isDark ? '#2e2e32' : '#e5e7eb',
     inputBg: isDark ? '#1a1a1a' : '#f5f6f8',
   };
-  // Mode-reactive accent — CUSTOMER_COLOR in customer mode, AGENT_COLOR in
-  // driver mode. The KYC card only ever renders in driver mode, so this
-  // always resolves to AGENT_COLOR there, but it's derived rather than
-  // hardcoded for consistency with everything else on this screen.
-  const accent = mode === 'driver' ? AGENT_COLOR : CUSTOMER_COLOR;
-  // Profile action buttons stay CUSTOMER_COLOR in both modes (product decision).
-  const buttonColor = CUSTOMER_COLOR;
+  const accent = c.text;
 
   const [profile, setProfile] = useState<Profile | null>(null);
   const [email, setEmail] = useState<string | null>(null);
@@ -255,16 +248,16 @@ export default function CustomerProfileScreen() {
           profile.is_agent_verified ? (
             <Pressable
               onPress={() => router.push('/kyc')}
-              style={({ pressed }) => [styles.kycBadge, { backgroundColor: c.card, borderColor: buttonColor }, pressed && { opacity: 0.6 }]}
+              style={({ pressed }) => [styles.kycBadge, { backgroundColor: c.card, borderColor: accent }, pressed && { opacity: 0.6 }]}
             >
               <Text style={[styles.kycBadgeText, { color: GREEN }]}>✓ KYC Verified</Text>
             </Pressable>
           ) : (
             <Pressable
               onPress={() => router.push('/kyc')}
-              style={({ pressed }) => [styles.primaryButton, { backgroundColor: buttonColor }, pressed && { opacity: 0.7 }]}
+              style={({ pressed }) => [styles.primaryButton, { backgroundColor: 'transparent', borderWidth: 1.5, borderColor: accent }, pressed && { opacity: 0.7 }]}
             >
-              <Text style={styles.primaryButtonText}>Complete KYC verification</Text>
+              <Text style={[styles.primaryButtonText, { color: accent }]}>Complete KYC verification</Text>
             </Pressable>
           )
         )}
@@ -285,18 +278,18 @@ export default function CustomerProfileScreen() {
             <Pressable
               onPress={handleSaveUpi}
               disabled={savingUpi}
-              style={({ pressed }) => [styles.primaryButton, { backgroundColor: buttonColor, marginTop: 10 }, (pressed || savingUpi) && { opacity: 0.7 }]}
+              style={({ pressed }) => [styles.primaryButton, { backgroundColor: 'transparent', borderWidth: 1.5, borderColor: accent, marginTop: 10 }, (pressed || savingUpi) && { opacity: 0.7 }]}
             >
-              <Text style={styles.primaryButtonText}>{savingUpi ? 'Saving…' : 'Save'}</Text>
+              <Text style={[styles.primaryButtonText, { color: accent }]}>{savingUpi ? 'Saving…' : 'Save'}</Text>
             </Pressable>
           </View>
         )}
 
         <Pressable
           onPress={() => router.push('/my-orders')}
-          style={({ pressed }) => [styles.secondaryButton, { borderColor: buttonColor }, pressed && { opacity: 0.6 }]}
+          style={({ pressed }) => [styles.secondaryButton, { borderColor: accent }, pressed && { opacity: 0.6 }]}
         >
-          <Text style={[styles.secondaryButtonText, { color: buttonColor }]}>
+          <Text style={[styles.secondaryButtonText, { color: accent }]}>
             {mode === 'driver' ? 'View My Deliveries' : 'View My Orders'}
           </Text>
         </Pressable>
