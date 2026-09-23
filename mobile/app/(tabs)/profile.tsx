@@ -48,6 +48,8 @@ export default function CustomerProfileScreen() {
   // always resolves to AGENT_COLOR there, but it's derived rather than
   // hardcoded for consistency with everything else on this screen.
   const accent = mode === 'driver' ? AGENT_COLOR : CUSTOMER_COLOR;
+  // Profile action buttons stay CUSTOMER_COLOR in both modes (product decision).
+  const buttonColor = CUSTOMER_COLOR;
 
   const [profile, setProfile] = useState<Profile | null>(null);
   const [email, setEmail] = useState<string | null>(null);
@@ -253,14 +255,14 @@ export default function CustomerProfileScreen() {
           profile.is_agent_verified ? (
             <Pressable
               onPress={() => router.push('/kyc')}
-              style={({ pressed }) => [styles.kycBadge, { backgroundColor: c.card, borderColor: accent }, pressed && { opacity: 0.6 }]}
+              style={({ pressed }) => [styles.kycBadge, { backgroundColor: c.card, borderColor: buttonColor }, pressed && { opacity: 0.6 }]}
             >
               <Text style={[styles.kycBadgeText, { color: GREEN }]}>✓ KYC Verified</Text>
             </Pressable>
           ) : (
             <Pressable
               onPress={() => router.push('/kyc')}
-              style={({ pressed }) => [styles.primaryButton, { backgroundColor: accent }, pressed && { opacity: 0.7 }]}
+              style={({ pressed }) => [styles.primaryButton, { backgroundColor: buttonColor }, pressed && { opacity: 0.7 }]}
             >
               <Text style={styles.primaryButtonText}>Complete KYC verification</Text>
             </Pressable>
@@ -283,7 +285,7 @@ export default function CustomerProfileScreen() {
             <Pressable
               onPress={handleSaveUpi}
               disabled={savingUpi}
-              style={({ pressed }) => [styles.primaryButton, { backgroundColor: accent, marginTop: 10 }, (pressed || savingUpi) && { opacity: 0.7 }]}
+              style={({ pressed }) => [styles.primaryButton, { backgroundColor: buttonColor, marginTop: 10 }, (pressed || savingUpi) && { opacity: 0.7 }]}
             >
               <Text style={styles.primaryButtonText}>{savingUpi ? 'Saving…' : 'Save'}</Text>
             </Pressable>
@@ -292,9 +294,9 @@ export default function CustomerProfileScreen() {
 
         <Pressable
           onPress={() => router.push('/my-orders')}
-          style={({ pressed }) => [styles.secondaryButton, { borderColor: accent }, pressed && { opacity: 0.6 }]}
+          style={({ pressed }) => [styles.secondaryButton, { borderColor: buttonColor }, pressed && { opacity: 0.6 }]}
         >
-          <Text style={[styles.secondaryButtonText, { color: accent }]}>
+          <Text style={[styles.secondaryButtonText, { color: buttonColor }]}>
             {mode === 'driver' ? 'View My Deliveries' : 'View My Orders'}
           </Text>
         </Pressable>
