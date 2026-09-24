@@ -1,7 +1,7 @@
 import { useEffect, useState, type ReactNode } from 'react';
 import {
   View, Text, TextInput, Pressable, StyleSheet, Switch,
-  useColorScheme, Alert, ScrollView, ActivityIndicator,
+  useColorScheme, Alert, ScrollView, ActivityIndicator, Linking,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Image } from 'expo-image';
@@ -352,6 +352,29 @@ export default function PostItemScreen() {
 
       if (insertError) {
         throw new Error(insertError.message);
+      }
+
+      // The order_fee_system DB trigger already fired synchronously as part
+      // of the insert above — check what it did. 'waived' (free-tier) or
+      // 'paid' (wallet covered it) need nothing further here. 'pending'
+      // means the wallet was short, and the app opens Razorpay's UPI
+      // checkout right now to settle the shortfall — not blocking the post
+      // itself, which has already succeeded.
+      const { data: feeCharge } = await supabase
+        .from('fee_charges')
+        .select('id, status')
+        .eq('order_id', insertedOrder.id)
+        .eq('fee_type', 'customer_post')
+        .maybeSingle();
+
+      if (feeCharge?.status === 'pending') {
+        const { data: razorpayData, error: razorpayError } = await supabase.functions.invoke(
+          'razorpay-create-order',
+          { body: { fee_charge_id: feeCharge.id } },
+        );
+        if (!razorpayError && razorpayData?.payment_url) {
+          await Linking.openURL(razorpayData.payment_url);
+        }
       }
 
       Alert.alert(
