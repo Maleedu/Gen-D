@@ -22,7 +22,7 @@ do not rename that internal value, only the displayed text):
 
 ```tsx
 <Text>
-  {mode === 'driver'
+  {mode === "driver"
     ? "You haven't delivered any parcels yet."
     : "You haven't posted any parcels yet."}
 </Text>
@@ -52,7 +52,7 @@ now unless the extraction is trivial and clearly safe.
 function BackButton() {
   return (
     <View style={styles.backRow}>
-      <Pressable onPress={() => router.replace('/')} hitSlop={8}>
+      <Pressable onPress={() => router.replace("/")} hitSlop={8}>
         <Text style={[styles.backText, { color: BLUE }]}>‹ Back</Text>
       </Pressable>
     </View>
