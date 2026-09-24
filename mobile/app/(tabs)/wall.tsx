@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   View, Text, Pressable, StyleSheet, useColorScheme, Alert,
-  FlatList, RefreshControl, TextInput, Animated, Easing, ActivityIndicator,
+  FlatList, RefreshControl, TextInput, Animated, Easing, ActivityIndicator, Linking,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Image } from 'expo-image';
@@ -403,6 +403,30 @@ export default function WallScreen() {
       fetchOrders();
       return;
     }
+
+    // The order_fee_system DB trigger already fired synchronously as part
+    // of the update above — check what it did. 'waived' (free-tier) or
+    // 'paid' (wallet covered it) need nothing further here. 'pending'
+    // means the wallet was short, and the app opens Razorpay's UPI
+    // Payment Link now to settle the shortfall — not blocking the
+    // acceptance itself, which has already succeeded.
+    const { data: feeCharge } = await supabase
+      .from('fee_charges')
+      .select('id, status')
+      .eq('order_id', order.id)
+      .eq('fee_type', 'agent_accept')
+      .maybeSingle();
+
+    if (feeCharge?.status === 'pending') {
+      const { data: razorpayData, error: razorpayError } = await supabase.functions.invoke(
+        'razorpay-create-order',
+        { body: { fee_charge_id: feeCharge.id } },
+      );
+      if (!razorpayError && razorpayData?.payment_url) {
+        await Linking.openURL(razorpayData.payment_url);
+      }
+    }
+
     setOrders((prev) => (prev ? prev.filter((o) => o.id !== order.id) : prev));
     router.push({ pathname: '/order/[id]', params: { id: order.id } });
   }
