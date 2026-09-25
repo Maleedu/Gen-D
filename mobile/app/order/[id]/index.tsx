@@ -2,14 +2,15 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   View, Text, Pressable, StyleSheet, useColorScheme, Alert,
   ActivityIndicator, ScrollView, RefreshControl, TextInput, Linking, Image,
-  KeyboardAvoidingView, Platform,
+  KeyboardAvoidingView, Platform, Modal,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import * as ImagePicker from 'expo-image-picker';
 import { File } from 'expo-file-system';
 import { ImageManipulator, SaveFormat } from 'expo-image-manipulator';
-import { router, Stack, useLocalSearchParams } from 'expo-router';
+import { router, Stack, useFocusEffect, useLocalSearchParams } from 'expo-router';
 import QRCode from 'react-native-qrcode-svg';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { supabase } from '../../../lib/supabase';
 import { fetchGamificationProfile, LEVEL_COLOR } from '../../../lib/gamification';
 import { AgentAvatar } from '../../../components/agent-avatar';
@@ -23,7 +24,7 @@ const NEUTRAL = '#6b7280';
 type OrderStatus = 'open' | 'accepted' | 'picked_up' | 'delivered' | 'cancelled';
 type DeliverySpeed = 'standard' | 'express' | 'super_fast';
 type PricingMode = 'fixed' | 'auction';
-type VehicleType = 'bike' | 'car' | 'bus' | 'other' | 'none';
+type VehicleType = 'bike' | 'car' | 'auto' | 'bus' | 'other' | 'none';
 type SealStatus = 'intact' | 'broken';
 type ComplaintStatus = 'open' | 'investigating' | 'resolved' | 'dismissed';
 type Role = 'customer' | 'agent';
@@ -33,6 +34,7 @@ type Order = {
   customer_id: string;
   accepted_agent_id: string | null;
   status: OrderStatus;
+  order_type: 'parcel' | 'ride';
   item_description: string;
   item_category: string;
   point_a_address: string;
@@ -48,6 +50,8 @@ type Order = {
   // Only ever nonzero once status is 'accepted' — cancel_order itself only
   // charges it past that point (see handleCancelOrder). Null/0 pre-accept.
   cancellation_penalty_paise: number | null;
+  arrived_at: string | null;
+  rider_paid_at: string | null;
 };
 
 type AgentProfile = {
@@ -75,9 +79,9 @@ type Palette = {
 };
 
 const ORDER_COLUMNS =
-  'id, customer_id, accepted_agent_id, status, item_description, item_category, ' +
+  'id, customer_id, accepted_agent_id, status, order_type, item_description, item_category, ' +
   'point_a_address, point_b_address, point_a_lat, point_a_lng, point_b_lat, point_b_lng, ' +
-  'delivery_speed, pricing_mode, price_paise, min_bid_paise, cancellation_penalty_paise';
+  'delivery_speed, pricing_mode, price_paise, min_bid_paise, cancellation_penalty_paise, arrived_at, rider_paid_at';
 
 const SPEED_META: Record<DeliverySpeed, { label: string; color: string }> = {
   super_fast: { label: 'Priority', color: RED },
@@ -108,7 +112,7 @@ function statusMetaFor(status: OrderStatus, role: Role): { label: string; color:
 }
 
 const VEHICLE_LABEL: Record<VehicleType, string> = {
-  bike: '🏍️ Bike', car: '🚗 Car', bus: '🚌 Bus', other: '📦 Other vehicle', none: '🚶 On foot',
+  bike: '🏍️ Bike', car: '🚗 Car', auto: '🛺 Auto', bus: '🚌 Bus', other: '📦 Other vehicle', none: '🚶 On foot',
 };
 
 function formatRupees(paise: number | null) {
@@ -121,6 +125,45 @@ function formatRupees(paise: number | null) {
 // default for a `https://` link.
 function mapsUrl(lat: number, lng: number) {
   return `https://www.google.com/maps/dir/?api=1&destination=${lat},${lng}`;
+}
+
+// AsyncStorage key for this order's last-seen-chat timestamp — there's no
+// read-receipt column on order_messages, so "unread" is purely a local,
+// per-device comparison against this.
+const chatSeenKey = (id: string) => `gend_chat_seen_${id}`;
+
+type DriverLoc = { lat: number; lng: number; updated_at: string };
+
+// Hermes-safe: Postgres timestamps can carry more than 3 fractional-second
+// digits, which Hermes' Date parser rejects outright (returns Invalid
+// Date) — trim to milliseconds before parsing.
+function parseTs(s: string): number {
+  return new Date(s.replace(/(\.\d{3})\d+/, '$1')).getTime();
+}
+
+function haversineKm(lat1: number, lng1: number, lat2: number, lng2: number): number {
+  const R = 6371;
+  const dLat = ((lat2 - lat1) * Math.PI) / 180;
+  const dLng = ((lng2 - lng1) * Math.PI) / 180;
+  const a =
+    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos((lat1 * Math.PI) / 180) * Math.cos((lat2 * Math.PI) / 180) * Math.sin(dLng / 2) * Math.sin(dLng / 2);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  return R * c;
+}
+
+function formatDistance(km: number): string {
+  return km < 1 ? `${Math.round(km * 1000)} m` : `${km.toFixed(1)} km`;
+}
+
+// Assumes about 20 km/h city speed.
+function formatEta(km: number): string {
+  const minutes = Math.max(1, Math.round((km / 20) * 60));
+  return `${minutes} min`;
+}
+
+function formatAge(seconds: number): string {
+  return seconds < 60 ? `${seconds}s ago` : `${Math.floor(seconds / 60)} min ago`;
 }
 
 export default function OrderTrackingScreen() {
@@ -187,6 +230,32 @@ export default function OrderTrackingScreen() {
 
   const [sealResult, setSealResult] = useState<SealStatus | null>(null);
   const [complaintStatus, setComplaintStatus] = useState<ComplaintStatus | null>(null);
+
+  // Ride-only state for the pay-at-dropoff flow. paymentSheetDismissed is
+  // local-only UI state; the payment itself is recorded server-side via
+  // rider_mark_paid (order.rider_paid_at) and arrive_at_dropoff
+  // (order.arrived_at) — see handleRiderPaid / handleArriveAtDropoff below.
+  const [markingPaid, setMarkingPaid] = useState(false);
+  const [paymentSheetDismissed, setPaymentSheetDismissed] = useState(false);
+  const [arrivingAtDropoff, setArrivingAtDropoff] = useState(false);
+  const [completingRide, setCompletingRide] = useState(false);
+
+  // "New message" indicator for every Chat button on this screen — true
+  // when the OTHER party has a message newer than our stored seen
+  // timestamp (see chatSeenKey above).
+  const [chatUnread, setChatUnread] = useState(false);
+  // True once this device has actually opened the chat screen for this
+  // order — gates the focus-effect below so returning to this screen
+  // without ever having opened chat can't mark anything seen.
+  const chatOpenedRef = useRef(false);
+
+  // Customer-only: the accepted agent's last-reported live position for
+  // this order (see order_live_locations) — null while none has arrived
+  // yet, or once the order leaves 'accepted'/'picked_up'. nowTick just
+  // forces the age/distance text below to re-render periodically without
+  // needing driverLoc itself to change.
+  const [driverLoc, setDriverLoc] = useState<DriverLoc | null>(null);
+  const [nowTick, setNowTick] = useState(() => Date.now());
 
   // Own auth id — needed as `rater_id` when submitting a rating (RLS
   // requires it match auth.uid(), so it has to come from the client's own
@@ -374,6 +443,31 @@ export default function OrderTrackingScreen() {
     [orderId],
   );
 
+  // Compares the other party's newest order_messages row against our
+  // stored seen timestamp for this order (see chatSeenKey above).
+  const checkChatUnread = useCallback(async (oid: string, uid: string) => {
+    let seen: string | null = null;
+    try {
+      seen = await AsyncStorage.getItem(chatSeenKey(oid));
+    } catch {
+      seen = null;
+    }
+    const { data: lastMessage } = await supabase
+      .from('order_messages')
+      .select('created_at')
+      .eq('order_id', oid)
+      .neq('sender_id', uid)
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    setChatUnread(!!lastMessage && (!seen || parseTs(lastMessage.created_at) > parseTs(seen)));
+  }, []);
+
+  const loadDriverLocation = useCallback(async (oid: string) => {
+    const { data } = await supabase.from('order_live_locations').select('lat, lng, updated_at').eq('order_id', oid).maybeSingle();
+    setDriverLoc(data ? (data as DriverLoc) : null);
+  }, []);
+
   const loadEverything = useCallback(async () => {
     if (!orderId) return;
     setLoadError(null);
@@ -409,16 +503,20 @@ export default function OrderTrackingScreen() {
     if (r === 'customer' && o.accepted_agent_id) loadAgentProfile(o.accepted_agent_id);
     if (r === 'agent') loadCustomerProfile(o.customer_id);
     if (r === 'customer' && o.status === 'open' && o.pricing_mode === 'auction') loadBidSummary(orderId);
-    if (o.status === 'accepted') resolvePayableAmount(o);
+    if (o.status === 'accepted' || o.status === 'picked_up') resolvePayableAmount(o);
     if (o.status === 'picked_up') {
       checkPhotoExists();
       loadDeliveryPhoto(orderId);
     }
     if (o.status === 'delivered') {
-      loadDeliveredSummary();
+      if (o.order_type !== 'ride') loadDeliveredSummary();
       loadRatingInfo(r, user.id);
     }
-  }, [orderId, loadAgentProfile, loadCustomerProfile, loadBidSummary, resolvePayableAmount, checkPhotoExists, loadDeliveryPhoto, loadDeliveredSummary, loadRatingInfo]);
+    if (o.status !== 'open' && o.status !== 'cancelled' && o.accepted_agent_id) {
+      checkChatUnread(orderId, user.id);
+    }
+    if (r === 'customer' && (o.status === 'accepted' || o.status === 'picked_up')) loadDriverLocation(orderId);
+  }, [orderId, loadAgentProfile, loadCustomerProfile, loadBidSummary, resolvePayableAmount, checkPhotoExists, loadDeliveryPhoto, loadDeliveredSummary, loadRatingInfo, checkChatUnread, loadDriverLocation]);
 
   useEffect(() => {
     let ignore = false;
@@ -456,14 +554,21 @@ export default function OrderTrackingScreen() {
           setOrder(next);
           if (roleRef.current === 'customer' && next.accepted_agent_id) loadAgentProfile(next.accepted_agent_id);
           if (roleRef.current === 'agent') loadCustomerProfile(next.customer_id);
-          if (next.status === 'accepted') resolvePayableAmount(next);
+          if (next.status === 'accepted' || next.status === 'picked_up') resolvePayableAmount(next);
           if (next.status === 'picked_up') {
             checkPhotoExists();
             loadDeliveryPhoto(orderId);
           }
           if (next.status === 'delivered') {
-            loadDeliveredSummary();
+            if (next.order_type !== 'ride') loadDeliveredSummary();
             if (roleRef.current && userIdRef.current) loadRatingInfo(roleRef.current, userIdRef.current);
+          }
+          if (roleRef.current === 'customer') {
+            if (next.status === 'accepted' || next.status === 'picked_up') {
+              loadDriverLocation(orderId);
+            } else {
+              setDriverLoc(null);
+            }
           }
         },
       )
@@ -482,11 +587,64 @@ export default function OrderTrackingScreen() {
           if (roleRef.current === 'customer') loadBidSummary(orderId);
         },
       )
+      .on(
+        'postgres_changes',
+        { event: 'INSERT', schema: 'public', table: 'order_messages', filter: `order_id=eq.${orderId}` },
+        (payload) => {
+          if (payload.new.sender_id !== userIdRef.current) setChatUnread(true);
+        },
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'order_live_locations', filter: `order_id=eq.${orderId}` },
+        (payload) => {
+          if (payload.eventType === 'DELETE') {
+            setDriverLoc(null);
+            return;
+          }
+          const row = payload.new as DriverLoc;
+          setDriverLoc({ lat: row.lat, lng: row.lng, updated_at: row.updated_at });
+        },
+      )
       .subscribe();
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [orderId, loadAgentProfile, loadCustomerProfile, loadBidSummary, resolvePayableAmount, checkPhotoExists, loadDeliveryPhoto, loadDeliveredSummary, loadRatingInfo]);
+  }, [orderId, loadAgentProfile, loadCustomerProfile, loadBidSummary, resolvePayableAmount, checkPhotoExists, loadDeliveryPhoto, loadDeliveredSummary, loadRatingInfo, loadDriverLocation]);
+
+  // Covers messages that arrived while the chat screen was open on this
+  // device (the realtime INSERT handler above would have already flipped
+  // chatUnread back to true for those) — re-mark everything seen the
+  // moment this screen regains focus after chat was actually opened.
+  useFocusEffect(
+    useCallback(() => {
+      if (!chatOpenedRef.current || !orderId) return;
+      chatOpenedRef.current = false;
+      setChatUnread(false);
+      (async () => {
+        try {
+          await AsyncStorage.setItem(chatSeenKey(orderId), new Date().toISOString());
+        } catch {
+          // Storage unavailable — worst case the unread flag re-appears
+          // until the next real message.
+        }
+      })();
+    }, [orderId]),
+  );
+
+  // Re-renders the driver-location card's age/distance text every 15s
+  // without needing driverLoc itself to change (it only changes when a new
+  // position actually arrives).
+  useEffect(() => {
+    if (role !== 'customer') return;
+    if (order?.status !== 'accepted' && order?.status !== 'picked_up') return;
+    const interval = setInterval(() => {
+      setNowTick(Date.now());
+    }, 15000);
+    return () => {
+      clearInterval(interval);
+    };
+  }, [role, order?.status]);
 
   async function handleRevealOtp() {
     if (!order) return;
@@ -775,6 +933,120 @@ export default function OrderTrackingScreen() {
     );
   }
 
+  // Ride-only: fires when the customer taps "I've paid" on the picked_up
+  // card or the payment sheet. Records rider_paid_at server-side via
+  // rider_mark_paid (RPC-enforced: only while picked_up and after
+  // arrived_at), then best-effort nudges the agent — the ride only
+  // actually completes once the agent confirms via agent_complete_ride, so
+  // a failed push here just means a slower nudge, never a stuck flow.
+  async function handleRiderPaid() {
+    if (!order) return;
+    setMarkingPaid(true);
+    const { error } = await supabase.rpc('rider_mark_paid', { p_order_id: order.id });
+    setMarkingPaid(false);
+    if (error) {
+      Alert.alert("Couldn't send", error.message);
+      return;
+    }
+    setOrder((prev) => (prev ? { ...prev, rider_paid_at: new Date().toISOString() } : prev));
+
+    (async () => {
+      try {
+        await supabase.functions.invoke('send-push', {
+          body: {
+            event: 'agent_status_change',
+            order_id: order.id,
+            recipient_profile_id: order.accepted_agent_id,
+            title: "Rider says they've paid",
+            body: "Confirm you've received the payment, then complete the ride.",
+          },
+        });
+      } catch {
+        // Silently ignored — see comment above.
+      }
+    })();
+    Alert.alert('Sent', 'Your driver has been told you have paid. They will end the ride once they confirm.');
+  }
+
+  // Ride-only: agent marks themselves as physically at the drop-off, which
+  // unlocks the "payment received" step below and nudges the customer to
+  // pay.
+  async function handleArriveAtDropoff() {
+    if (!order) return;
+    setArrivingAtDropoff(true);
+    const { error } = await supabase.rpc('arrive_at_dropoff', { p_order_id: order.id });
+    setArrivingAtDropoff(false);
+    if (error) {
+      Alert.alert("Couldn't mark arrival", error.message);
+      return;
+    }
+    const arrivedAt = new Date().toISOString();
+    setOrder((prev) => (prev ? { ...prev, arrived_at: arrivedAt } : prev));
+
+    // Best-effort only — arrival is already recorded at this point, so a
+    // push failure here must never surface as an error or affect the flow.
+    (async () => {
+      try {
+        await supabase.functions.invoke('send-push', {
+          body: {
+            event: 'agent_status_change',
+            order_id: order.id,
+            recipient_profile_id: order.customer_id,
+            title: 'Your driver has arrived',
+            body: 'Please pay your driver to end the ride.',
+          },
+        });
+      } catch {
+        // Silently ignored — see comment above.
+      }
+    })();
+  }
+
+  function handleCompleteRidePress() {
+    Alert.alert(
+      'Confirm you have received the payment?',
+      undefined,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Confirm', onPress: handleCompleteRide },
+      ],
+    );
+  }
+
+  // Ride-only: agent's final step — ends the ride once payment is
+  // confirmed. Mirrors submitSeal's parcel-side role (both flip the order
+  // to 'delivered'), just via a different RPC since rides have no seal to
+  // check.
+  async function handleCompleteRide() {
+    if (!order) return;
+    setCompletingRide(true);
+    const { error } = await supabase.rpc('agent_complete_ride', { p_order_id: order.id });
+    setCompletingRide(false);
+    if (error) {
+      Alert.alert("Couldn't complete ride", error.message);
+      return;
+    }
+    setOrder((prev) => (prev ? { ...prev, status: 'delivered' } : prev));
+
+    // Best-effort only — the ride is already completed at this point, so a
+    // push failure here must never surface as an error or affect the flow.
+    (async () => {
+      try {
+        await supabase.functions.invoke('send-push', {
+          body: {
+            event: 'order_delivered',
+            order_id: order.id,
+            recipient_profile_id: order.customer_id,
+            title: 'Ride completed',
+            body: 'Thanks for riding with Gen-D. Please rate your driver.',
+          },
+        });
+      } catch {
+        // Silently ignored — see comment above.
+      }
+    })();
+  }
+
   async function handleSubmitRating() {
     if (!order || !role || !userId) return;
     if (ratingStars < 1) {
@@ -821,6 +1093,23 @@ export default function OrderTrackingScreen() {
     Linking.openURL(`tel:${customerProfile.phone_number}`);
   }
 
+  // Every Chat button on this screen goes through here instead of a direct
+  // router.push, so opening chat always marks it seen (both immediately
+  // and, via chatOpenedRef + the focus-effect above, for anything that
+  // arrives while chat is still open).
+  async function openChat() {
+    if (!order) return;
+    chatOpenedRef.current = true;
+    setChatUnread(false);
+    try {
+      await AsyncStorage.setItem(chatSeenKey(order.id), new Date().toISOString());
+    } catch {
+      // Storage unavailable — worst case the unread flag re-appears until
+      // the next real message.
+    }
+    router.push({ pathname: '/order/[id]/chat', params: { id: order.id } });
+  }
+
   function handleOpenMaps(lat: number | null, lng: number | null) {
     if (lat == null || lng == null) {
       Alert.alert('No coordinates on file for this stop.');
@@ -832,7 +1121,7 @@ export default function OrderTrackingScreen() {
   if (loading) {
     return (
       <SafeAreaView style={[styles.container, { backgroundColor: c.bg }]}>
-        <Stack.Screen options={{ title: 'Order' }} />
+        <Stack.Screen options={{ title: 'Order', headerBackTitle: 'Back' }} />
         <View style={styles.centerFill}>
           <ActivityIndicator color={BLUE} />
         </View>
@@ -843,7 +1132,7 @@ export default function OrderTrackingScreen() {
   if (loadError || !order || !role) {
     return (
       <SafeAreaView style={[styles.container, { backgroundColor: c.bg }]}>
-        <Stack.Screen options={{ title: 'Order' }} />
+        <Stack.Screen options={{ title: 'Order', headerBackTitle: 'Back' }} />
         <View style={styles.centerFill}>
           <Text style={[styles.errorText, { color: c.text }]}>{loadError ?? 'Something went wrong.'}</Text>
         </View>
@@ -851,6 +1140,7 @@ export default function OrderTrackingScreen() {
     );
   }
 
+  const isRide = order.order_type === 'ride';
   const speedMeta = SPEED_META[order.delivery_speed];
   const statusMeta = statusMetaFor(order.status, role);
   const priceLabel =
@@ -858,14 +1148,16 @@ export default function OrderTrackingScreen() {
 
   return (
     <SafeAreaView style={[styles.container, { backgroundColor: c.bg }]} edges={['top', 'left', 'right']}>
-      <Stack.Screen options={{ title: 'Order' }} />
+      <Stack.Screen options={{ title: 'Order', headerBackTitle: 'Back' }} />
       <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
       <ScrollView
         contentContainerStyle={styles.scroll}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={BLUE} colors={[BLUE]} />}
       >
         <View style={[styles.statusPill, { backgroundColor: `${statusMeta.color}22` }]}>
-          <Text style={[styles.statusPillText, { color: statusMeta.color }]}>{statusMeta.label}</Text>
+          <Text style={[styles.statusPillText, { color: statusMeta.color }]}>
+            {isRide && order.status === 'delivered' ? 'Completed' : statusMeta.label}
+          </Text>
         </View>
 
         <View style={[styles.card, { backgroundColor: c.card, borderColor: c.border }]}>
@@ -880,6 +1172,50 @@ export default function OrderTrackingScreen() {
             <Text style={[styles.price, { color: c.text }]}>{priceLabel}</Text>
           </View>
         </View>
+
+        {role === 'customer' && (order.status === 'accepted' || order.status === 'picked_up') && (
+          <View style={[styles.card, { backgroundColor: c.card, borderColor: c.border }]}>
+            <Text style={[styles.sectionLabel, { color: c.muted }]}>Driver location</Text>
+            {driverLoc == null ? (
+              <Text style={[styles.note, { color: c.muted }]}>Waiting for your driver to share their location.</Text>
+            ) : (() => {
+              const ageSec = Math.max(0, Math.floor((nowTick - parseTs(driverLoc.updated_at)) / 1000));
+              const target = order.status === 'accepted'
+                ? { lat: order.point_a_lat, lng: order.point_a_lng, label: 'pickup' }
+                : { lat: order.point_b_lat, lng: order.point_b_lng, label: 'drop-off' };
+              const km = target.lat != null && target.lng != null
+                ? haversineKm(driverLoc.lat, driverLoc.lng, target.lat, target.lng)
+                : null;
+              return (
+                <>
+                  {ageSec > 120 ? (
+                    <>
+                      <Text style={[styles.sectionText, { color: AMBER }]}>
+                        Location not updating — the driver may have switched apps.
+                      </Text>
+                      <Text style={[styles.note, { color: c.muted }]}>Last seen {formatAge(ageSec)}</Text>
+                    </>
+                  ) : km != null ? (
+                    <>
+                      <Text style={[styles.sectionText, { color: c.text, fontWeight: '700' }]}>
+                        Driver is {formatDistance(km)} from {target.label} · about {formatEta(km)}
+                      </Text>
+                      <Text style={[styles.note, { color: c.muted }]}>Estimate at city speed · updated {formatAge(ageSec)}</Text>
+                    </>
+                  ) : (
+                    <Text style={[styles.note, { color: c.muted }]}>Driver location updated {formatAge(ageSec)}</Text>
+                  )}
+                  <Pressable
+                    onPress={() => Linking.openURL(`https://www.google.com/maps/search/?api=1&query=${driverLoc.lat},${driverLoc.lng}`)}
+                    style={({ pressed }) => [styles.secondaryButton, { borderColor: BLUE, marginTop: 10 }, pressed && { opacity: 0.6 }]}
+                  >
+                    <Text style={[styles.secondaryButtonText, { color: BLUE }]}>📍 See driver in Maps</Text>
+                  </Pressable>
+                </>
+              );
+            })()}
+          </View>
+        )}
 
         {order.status === 'open' && (
           <View style={[styles.card, { backgroundColor: c.card, borderColor: c.border }]}>
@@ -917,8 +1253,9 @@ export default function OrderTrackingScreen() {
               c={c}
               onContact={handleContactAgent}
               resolvedAmountPaise={resolvedAmountPaise}
-              orderStatus={order.status}
-              orderId={order.id}
+              showPayment={true}
+              chatUnread={chatUnread}
+              onOpenChat={openChat}
             />
             <View style={[styles.card, { backgroundColor: c.card, borderColor: c.border }]}>
               <MapsButton label="Open pickup location in Maps" onPress={() => handleOpenMaps(order.point_a_lat, order.point_a_lng)} />
@@ -966,10 +1303,15 @@ export default function OrderTrackingScreen() {
               <Text style={[styles.secondaryButtonText, { color: BLUE }]}>📞 Contact</Text>
             </Pressable>
             <Pressable
-              onPress={() => router.push({ pathname: '/order/[id]/chat', params: { id: order.id } })}
-              style={({ pressed }) => [styles.secondaryButton, { borderColor: BLUE, marginTop: 10 }, pressed && { opacity: 0.6 }]}
+              onPress={openChat}
+              style={({ pressed }) => [
+                styles.secondaryButton, { borderColor: chatUnread ? RED : BLUE, marginTop: 10 },
+                pressed && { opacity: 0.6 },
+              ]}
             >
-              <Text style={[styles.secondaryButtonText, { color: BLUE }]}>💬 Chat</Text>
+              <Text style={[styles.secondaryButtonText, { color: chatUnread ? RED : BLUE }]}>
+                {chatUnread ? '💬 Chat • New message' : '💬 Chat'}
+              </Text>
             </Pressable>
             <View style={[styles.divider, { backgroundColor: c.border }]} />
             <Text style={[styles.sectionLabel, { color: c.muted }]}>Enter pickup code</Text>
@@ -1034,7 +1376,7 @@ export default function OrderTrackingScreen() {
           </View>
         )}
 
-        {order.status === 'picked_up' && role === 'customer' && (
+        {order.status === 'picked_up' && role === 'customer' && !isRide && (
           <View style={[styles.card, { backgroundColor: c.card, borderColor: c.border }]}>
             <MapsButton label="Open dropoff location in Maps" onPress={() => handleOpenMaps(order.point_b_lat, order.point_b_lng)} />
             <View style={[styles.divider, { backgroundColor: c.border }]} />
@@ -1087,6 +1429,45 @@ export default function OrderTrackingScreen() {
           </View>
         )}
 
+        {order.status === 'picked_up' && role === 'customer' && isRide && (
+          <>
+            <AgentCard
+              agent={agentProfile}
+              c={c}
+              onContact={handleContactAgent}
+              resolvedAmountPaise={resolvedAmountPaise}
+              showPayment={true}
+              chatUnread={chatUnread}
+              onOpenChat={openChat}
+            />
+            <View style={[styles.card, { backgroundColor: c.card, borderColor: c.border }]}>
+              <MapsButton label="Open dropoff location in Maps" onPress={() => handleOpenMaps(order.point_b_lat, order.point_b_lng)} />
+              <View style={[styles.divider, { backgroundColor: c.border }]} />
+              <Text style={[styles.sectionText, { color: c.muted }]}>Trip in progress</Text>
+              {order.arrived_at != null && (
+                <>
+                  <View style={[styles.divider, { backgroundColor: c.border }]} />
+                  <Text style={[styles.sectionText, { color: c.text }]}>
+                    Your driver has arrived. Pay your driver, then they will end the ride.
+                  </Text>
+                  <Pressable
+                    onPress={handleRiderPaid}
+                    disabled={order.rider_paid_at != null || markingPaid}
+                    style={({ pressed }) => [
+                      styles.primaryButton, { marginTop: 12 },
+                      (pressed || order.rider_paid_at != null || markingPaid) && { opacity: 0.7 },
+                    ]}
+                  >
+                    <Text style={styles.primaryButtonText}>
+                      {order.rider_paid_at != null ? "Paid ✓ Waiting for your driver to confirm" : (markingPaid ? 'Sending…' : "I've paid")}
+                    </Text>
+                  </Pressable>
+                </>
+              )}
+            </View>
+          </>
+        )}
+
         {order.status === 'picked_up' && role === 'agent' && (
           <View style={[styles.card, { backgroundColor: c.card, borderColor: c.border }]}>
             <MapsButton label="Open dropoff location in Maps" onPress={() => handleOpenMaps(order.point_b_lat, order.point_b_lng)} />
@@ -1101,34 +1482,73 @@ export default function OrderTrackingScreen() {
               <Text style={[styles.secondaryButtonText, { color: BLUE }]}>📞 Contact</Text>
             </Pressable>
             <Pressable
-              onPress={() => router.push({ pathname: '/order/[id]/chat', params: { id: order.id } })}
-              style={({ pressed }) => [styles.secondaryButton, { borderColor: BLUE, marginTop: 10 }, pressed && { opacity: 0.6 }]}
+              onPress={openChat}
+              style={({ pressed }) => [
+                styles.secondaryButton, { borderColor: chatUnread ? RED : BLUE, marginTop: 10 },
+                pressed && { opacity: 0.6 },
+              ]}
             >
-              <Text style={[styles.secondaryButtonText, { color: BLUE }]}>💬 Chat</Text>
+              <Text style={[styles.secondaryButtonText, { color: chatUnread ? RED : BLUE }]}>
+                {chatUnread ? '💬 Chat • New message' : '💬 Chat'}
+              </Text>
             </Pressable>
             <View style={[styles.divider, { backgroundColor: c.border }]} />
-            <Text style={[styles.sectionLabel, { color: c.muted }]}>Delivery photo</Text>
-            {photoExists ? (
+            {isRide ? (
+              order.arrived_at == null ? (
+                <Pressable
+                  onPress={handleArriveAtDropoff}
+                  disabled={arrivingAtDropoff}
+                  style={({ pressed }) => [styles.primaryButton, (pressed || arrivingAtDropoff) && { opacity: 0.7 }]}
+                >
+                  <Text style={styles.primaryButtonText}>{arrivingAtDropoff ? 'Marking arrival…' : "📍 I've arrived at drop-off"}</Text>
+                </Pressable>
+              ) : (
+                <>
+                  {order.rider_paid_at != null ? (
+                    <Text style={[styles.sectionText, { color: GREEN, fontWeight: '700' }]}>
+                      ✅ Customer says they&apos;ve paid. Check your UPI app, then complete the ride.
+                    </Text>
+                  ) : (
+                    <Text style={[styles.note, { color: c.muted }]}>Waiting for the customer to pay</Text>
+                  )}
+                  <Pressable
+                    onPress={handleCompleteRidePress}
+                    disabled={completingRide}
+                    style={({ pressed }) => [
+                      styles.primaryButton, { backgroundColor: GREEN, marginTop: 10 },
+                      (pressed || completingRide) && { opacity: 0.7 },
+                    ]}
+                  >
+                    <Text style={styles.primaryButtonText}>{completingRide ? 'Completing…' : 'Payment received & complete ride'}</Text>
+                  </Pressable>
+                </>
+              )
+            ) : (
               <>
-                <Text style={[styles.note, { color: c.muted }]}>
-                  Photo submitted — waiting for the customer to confirm the seal.
-                </Text>
-                {deliveryPhotoUrl && (
-                  <Image
-                    source={{ uri: deliveryPhotoUrl }}
-                    style={styles.deliveryPhoto}
-                    resizeMode="cover"
-                  />
+                <Text style={[styles.sectionLabel, { color: c.muted }]}>Delivery photo</Text>
+                {photoExists ? (
+                  <>
+                    <Text style={[styles.note, { color: c.muted }]}>
+                      Photo submitted — waiting for the customer to confirm the seal.
+                    </Text>
+                    {deliveryPhotoUrl && (
+                      <Image
+                        source={{ uri: deliveryPhotoUrl }}
+                        style={styles.deliveryPhoto}
+                        resizeMode="cover"
+                      />
+                    )}
+                  </>
+                ) : (
+                  <Pressable
+                    onPress={pickDeliveryPhoto}
+                    disabled={uploadingPhoto}
+                    style={({ pressed }) => [styles.primaryButton, (pressed || uploadingPhoto) && { opacity: 0.7 }]}
+                  >
+                    <Text style={styles.primaryButtonText}>{uploadingPhoto ? 'Submitting…' : '📷 Submit delivery photo'}</Text>
+                  </Pressable>
                 )}
               </>
-            ) : (
-              <Pressable
-                onPress={pickDeliveryPhoto}
-                disabled={uploadingPhoto}
-                style={({ pressed }) => [styles.primaryButton, (pressed || uploadingPhoto) && { opacity: 0.7 }]}
-              >
-                <Text style={styles.primaryButtonText}>{uploadingPhoto ? 'Submitting…' : '📷 Submit delivery photo'}</Text>
-              </Pressable>
             )}
             <View style={[styles.divider, { backgroundColor: c.border }]} />
             {showAgentCancelForm ? (
@@ -1163,13 +1583,19 @@ export default function OrderTrackingScreen() {
 
         {order.status === 'delivered' && (
           <View style={[styles.card, { backgroundColor: c.card, borderColor: c.border }]}>
-            <Text style={[styles.sectionLabel, { color: c.muted }]}>Seal check result</Text>
-            {sealResult ? (
-              <Text style={[styles.sealResultText, { color: sealResult === 'intact' ? GREEN : RED }]}>
-                {sealResult === 'intact' ? '✅ Seal was intact' : '⚠️ Seal was reported broken'}
-              </Text>
+            {isRide ? (
+              <Text style={[styles.sealResultText, { color: GREEN }]}>✅ Ride completed</Text>
             ) : (
-              <Text style={[styles.note, { color: c.muted }]}>No seal check on file.</Text>
+              <>
+                <Text style={[styles.sectionLabel, { color: c.muted }]}>Seal check result</Text>
+                {sealResult ? (
+                  <Text style={[styles.sealResultText, { color: sealResult === 'intact' ? GREEN : RED }]}>
+                    {sealResult === 'intact' ? '✅ Seal was intact' : '⚠️ Seal was reported broken'}
+                  </Text>
+                ) : (
+                  <Text style={[styles.note, { color: c.muted }]}>No seal check on file.</Text>
+                )}
+              </>
             )}
             {complaintStatus && (
               <View style={[styles.complaintBanner, { backgroundColor: `${AMBER}22`, borderColor: AMBER }]}>
@@ -1226,6 +1652,40 @@ export default function OrderTrackingScreen() {
         )}
       </ScrollView>
       </KeyboardAvoidingView>
+      <Modal
+        visible={role === 'customer' && isRide && order.status === 'picked_up' && order.arrived_at != null && !paymentSheetDismissed}
+        animationType="slide"
+        transparent
+        onRequestClose={() => setPaymentSheetDismissed(true)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={[styles.modalSheet, { backgroundColor: c.card, borderColor: c.border }]}>
+            <Text style={[styles.modalTitle, { color: c.text }]}>You&apos;ve arrived</Text>
+            <Text style={[styles.modalAmount, { color: c.text }]}>{formatRupees(resolvedAmountPaise)}</Text>
+            {agentProfile && (
+              <UpiPayBlock agent={agentProfile} resolvedAmountPaise={resolvedAmountPaise} c={c} />
+            )}
+            <Pressable
+              onPress={handleRiderPaid}
+              disabled={order.rider_paid_at != null || markingPaid}
+              style={({ pressed }) => [
+                styles.primaryButton, { marginTop: 14 },
+                (pressed || order.rider_paid_at != null || markingPaid) && { opacity: 0.7 },
+              ]}
+            >
+              <Text style={styles.primaryButtonText}>
+                {order.rider_paid_at != null ? "Paid ✓ Waiting for your driver to confirm" : (markingPaid ? 'Sending…' : "I've paid")}
+              </Text>
+            </Pressable>
+            <Pressable
+              onPress={() => setPaymentSheetDismissed(true)}
+              style={({ pressed }) => [styles.secondaryButton, { borderColor: BLUE, marginTop: 10 }, pressed && { opacity: 0.6 }]}
+            >
+              <Text style={[styles.secondaryButtonText, { color: BLUE }]}>Close</Text>
+            </Pressable>
+          </View>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -1253,26 +1713,18 @@ function StarPicker({ value, onChange, c }: { value: number; onChange: (n: numbe
   );
 }
 
-function AgentCard({
-  agent, c, onContact, resolvedAmountPaise, orderStatus, orderId,
+// Shared by AgentCard's accepted/picked_up (ride) states and the ride
+// payment sheet — same upi://pay URI, same fallback note when the agent
+// hasn't set up UPI or the amount hasn't resolved yet.
+function UpiPayBlock({
+  agent, resolvedAmountPaise, c,
 }: {
-  agent: AgentProfile | null;
-  c: Palette;
-  onContact: () => void;
+  agent: AgentProfile;
   resolvedAmountPaise: number | null;
-  orderStatus: OrderStatus;
-  orderId: string;
+  c: Palette;
 }) {
-  if (!agent) {
-    return (
-      <View style={[styles.card, { backgroundColor: c.card, borderColor: c.border }]}>
-        <ActivityIndicator color={BLUE} />
-      </View>
-    );
-  }
-  const vehicleLabel = agent.vehicle_type ? VEHICLE_LABEL[agent.vehicle_type] : '';
   const upiUri =
-    agent.upi_id && resolvedAmountPaise != null && orderStatus === 'accepted'
+    agent.upi_id && resolvedAmountPaise != null
       ? `upi://pay?pa=${encodeURIComponent(agent.upi_id)}&pn=${encodeURIComponent(`${agent.first_name} ${agent.last_name}`)}&am=${(resolvedAmountPaise / 100).toFixed(2)}&cu=INR&tn=${encodeURIComponent('Gen-D order')}`
       : null;
 
@@ -1284,6 +1736,50 @@ function AgentCard({
       Alert.alert('No UPI app found', 'Install a UPI payment app to pay directly, or use the QR code below.');
     }
   }
+
+  if (!upiUri) {
+    return (
+      <Text style={[styles.note, { color: c.muted, marginTop: 10 }]}>
+        Your driver hasn&apos;t shared a UPI ID. Ask them in chat or pay in cash.
+      </Text>
+    );
+  }
+
+  return (
+    <>
+      <Pressable
+        onPress={handlePayViaUpi}
+        style={({ pressed }) => [styles.secondaryButton, { borderColor: GREEN, marginTop: 10 }, pressed && { opacity: 0.6 }]}
+      >
+        <Text style={[styles.secondaryButtonText, { color: GREEN }]}>💳 Pay via UPI</Text>
+      </Pressable>
+      <View style={styles.qrWrap}>
+        <QRCode value={upiUri} size={180} />
+        <Text style={[styles.qrCaption, { color: c.muted }]}>Or scan to pay</Text>
+      </View>
+    </>
+  );
+}
+
+function AgentCard({
+  agent, c, onContact, resolvedAmountPaise, showPayment, chatUnread, onOpenChat,
+}: {
+  agent: AgentProfile | null;
+  c: Palette;
+  onContact: () => void;
+  resolvedAmountPaise: number | null;
+  showPayment: boolean;
+  chatUnread: boolean;
+  onOpenChat: () => void;
+}) {
+  if (!agent) {
+    return (
+      <View style={[styles.card, { backgroundColor: c.card, borderColor: c.border }]}>
+        <ActivityIndicator color={BLUE} />
+      </View>
+    );
+  }
+  const vehicleLabel = agent.vehicle_type ? VEHICLE_LABEL[agent.vehicle_type] : '';
 
   return (
     <View style={[styles.card, { backgroundColor: c.card, borderColor: c.border }]}>
@@ -1319,25 +1815,17 @@ function AgentCard({
         <Text style={[styles.secondaryButtonText, { color: BLUE }]}>📞 Contact</Text>
       </Pressable>
       <Pressable
-        onPress={() => router.push({ pathname: '/order/[id]/chat', params: { id: orderId } })}
-        style={({ pressed }) => [styles.secondaryButton, { borderColor: BLUE, marginTop: 10 }, pressed && { opacity: 0.6 }]}
+        onPress={onOpenChat}
+        style={({ pressed }) => [
+          styles.secondaryButton, { borderColor: chatUnread ? RED : BLUE, marginTop: 10 },
+          pressed && { opacity: 0.6 },
+        ]}
       >
-        <Text style={[styles.secondaryButtonText, { color: BLUE }]}>💬 Chat</Text>
+        <Text style={[styles.secondaryButtonText, { color: chatUnread ? RED : BLUE }]}>
+          {chatUnread ? '💬 Chat • New message' : '💬 Chat'}
+        </Text>
       </Pressable>
-      {upiUri && (
-        <>
-          <Pressable
-            onPress={handlePayViaUpi}
-            style={({ pressed }) => [styles.secondaryButton, { borderColor: GREEN, marginTop: 10 }, pressed && { opacity: 0.6 }]}
-          >
-            <Text style={[styles.secondaryButtonText, { color: GREEN }]}>💳 Pay via UPI</Text>
-          </Pressable>
-          <View style={styles.qrWrap}>
-            <QRCode value={upiUri} size={180} />
-            <Text style={[styles.qrCaption, { color: c.muted }]}>Or scan to pay</Text>
-          </View>
-        </>
-      )}
+      {showPayment && <UpiPayBlock agent={agent} resolvedAmountPaise={resolvedAmountPaise} c={c} />}
     </View>
   );
 }
@@ -1401,5 +1889,10 @@ const styles = StyleSheet.create({
   levelPill: { paddingHorizontal: 8, paddingVertical: 2, borderRadius: 20 },
   levelPillText: { fontSize: 11, fontWeight: '700' },
   qrWrap: { alignItems: 'center', marginTop: 14, gap: 6 },
-  qrCaption: { fontSize: 12 },
+  qrCaption: { fontSize: 12, alignSelf: 'stretch', textAlign: 'center' },
+
+  modalOverlay: { flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(0,0,0,0.4)' },
+  modalSheet: { borderTopLeftRadius: 24, borderTopRightRadius: 24, borderWidth: StyleSheet.hairlineWidth, padding: 20, paddingBottom: 32, gap: 4 },
+  modalTitle: { fontSize: 20, fontWeight: '800' },
+  modalAmount: { fontSize: 28, fontWeight: '800', marginTop: 4, marginBottom: 6 },
 });
