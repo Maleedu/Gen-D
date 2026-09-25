@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import {
   View, Text, Pressable, StyleSheet, useColorScheme, Alert,
   ScrollView, RefreshControl, ActivityIndicator, TextInput, Share,
+  KeyboardAvoidingView, Platform,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
@@ -219,6 +220,7 @@ export default function CustomerProfileScreen() {
 
   return (
     <SafeAreaView style={[styles.container, { backgroundColor: c.bg }]} edges={['top', 'left', 'right']}>
+      <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
       <ScrollView
         contentContainerStyle={styles.scroll}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={accent} colors={[accent]} />}
@@ -337,6 +339,7 @@ export default function CustomerProfileScreen() {
           <Text style={[styles.creditSubtext, { color: c.muted }]}>By Navajyoth Maleedu</Text>
         </View>
       </ScrollView>
+      </KeyboardAvoidingView>
 
       <ArviBubble />
     </SafeAreaView>

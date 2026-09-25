@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   View, Text, Pressable, StyleSheet, useColorScheme, Alert,
   FlatList, RefreshControl, TextInput, Animated, Easing, ActivityIndicator, Linking,
+  KeyboardAvoidingView, Platform,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Image } from 'expo-image';
@@ -634,6 +635,7 @@ export default function WallScreen() {
 
   return (
     <SafeAreaView style={[styles.container, { backgroundColor: c.bg }]} edges={['top', 'left', 'right']}>
+      <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
       <View style={styles.header}>
         <Text style={[styles.headerTitle, { color: c.text }, fontsLoaded && { fontFamily: HEADING_FONT_BOLD }]}>
           The Wall
@@ -802,6 +804,7 @@ export default function WallScreen() {
           )}
         />
       )}
+      </KeyboardAvoidingView>
     </SafeAreaView>
   );
 }

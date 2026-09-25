@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   View, Text, Pressable, StyleSheet, useColorScheme, Alert,
   ActivityIndicator, ScrollView, RefreshControl, TextInput, Linking, Image,
+  KeyboardAvoidingView, Platform,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import * as ImagePicker from 'expo-image-picker';
@@ -172,6 +173,9 @@ export default function OrderTrackingScreen() {
   // Field names currently showing a red border — cleared the moment that
   // field is edited again, not left stuck on until the next submit attempt.
   const [fieldErrors, setFieldErrors] = useState<Set<string>>(new Set());
+  const [showAgentCancelForm, setShowAgentCancelForm] = useState(false);
+  const [agentCancelReason, setAgentCancelReason] = useState('');
+  const [cancellingOrder, setCancellingOrder] = useState(false);
 
   // Whether a delivery_photos row exists for this order — gates the
   // customer's seal-check buttons (verify_delivery_seal hard-rejects until
@@ -712,6 +716,58 @@ export default function OrderTrackingScreen() {
     );
   }
 
+  async function handleAgentCancelOrder() {
+    if (!order) return;
+    const reason = agentCancelReason.trim();
+    if (!reason) {
+      Alert.alert('Enter a reason', 'A cancellation reason is required.');
+      return;
+    }
+    setCancellingOrder(true);
+    const { data: stage, error } = await supabase.rpc('agent_cancel_order', {
+      p_order_id: order.id,
+      p_reason: reason,
+    });
+    setCancellingOrder(false);
+    if (error) {
+      Alert.alert("Couldn't cancel this delivery", error.message);
+      return;
+    }
+    setOrder((prev) => (prev ? { ...prev, status: 'open', accepted_agent_id: null } : prev));
+    setShowAgentCancelForm(false);
+    setAgentCancelReason('');
+
+    // Best-effort only — the order is already reopened at this point, so a
+    // push failure here must never surface as an error or affect the flow.
+    const customerId = order.customer_id;
+    (async () => {
+      try {
+        await supabase.functions.invoke('send-push', {
+          body: {
+            event: 'agent_backed_out',
+            order_id: order.id,
+            recipient_profile_id: customerId,
+            title: 'Finding you a new agent',
+            body: "Your agent could not complete this delivery. We're finding you a new one.",
+          },
+        });
+      } catch {
+        // Silently ignored — see comment above.
+      }
+    })();
+  }
+
+  function handleAgentCancelPress() {
+    Alert.alert(
+      'Cancel this delivery?',
+      "This reopens the order for another agent to accept. This can't be undone.",
+      [
+        { text: 'Never mind', style: 'cancel' },
+        { text: 'Continue', onPress: () => setShowAgentCancelForm(true) },
+      ],
+    );
+  }
+
   async function handleSubmitRating() {
     if (!order || !role || !userId) return;
     if (ratingStars < 1) {
@@ -796,6 +852,7 @@ export default function OrderTrackingScreen() {
   return (
     <SafeAreaView style={[styles.container, { backgroundColor: c.bg }]} edges={['top', 'left', 'right']}>
       <Stack.Screen options={{ title: 'Order' }} />
+      <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
       <ScrollView
         contentContainerStyle={styles.scroll}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={BLUE} colors={[BLUE]} />}
@@ -939,6 +996,34 @@ export default function OrderTrackingScreen() {
             >
               <Text style={styles.primaryButtonText}>{verifyingOtp ? 'Verifying…' : 'Verify & confirm pickup'}</Text>
             </Pressable>
+            <View style={[styles.divider, { backgroundColor: c.border }]} />
+            {showAgentCancelForm ? (
+              <>
+                <Text style={[styles.sectionLabel, { color: c.muted }]}>Reason for cancelling</Text>
+                <TextInput
+                  style={[styles.input, styles.commentInput, { backgroundColor: c.inputBg, color: c.text }]}
+                  value={agentCancelReason}
+                  onChangeText={setAgentCancelReason}
+                  placeholder="Why can't you complete this delivery?"
+                  placeholderTextColor={c.muted}
+                  multiline
+                />
+                <Pressable
+                  onPress={handleAgentCancelOrder}
+                  disabled={cancellingOrder}
+                  style={({ pressed }) => [styles.primaryButton, { backgroundColor: RED }, (pressed || cancellingOrder) && { opacity: 0.7 }]}
+                >
+                  <Text style={styles.primaryButtonText}>{cancellingOrder ? 'Cancelling…' : 'Confirm Cancellation'}</Text>
+                </Pressable>
+              </>
+            ) : (
+              <Pressable
+                onPress={handleAgentCancelPress}
+                style={({ pressed }) => [styles.secondaryButton, { borderColor: RED }, pressed && { opacity: 0.6 }]}
+              >
+                <Text style={[styles.secondaryButtonText, { color: RED }]}>Cancel this delivery</Text>
+              </Pressable>
+            )}
           </View>
         )}
 
@@ -1038,6 +1123,34 @@ export default function OrderTrackingScreen() {
                 <Text style={styles.primaryButtonText}>{uploadingPhoto ? 'Submitting…' : '📷 Submit delivery photo'}</Text>
               </Pressable>
             )}
+            <View style={[styles.divider, { backgroundColor: c.border }]} />
+            {showAgentCancelForm ? (
+              <>
+                <Text style={[styles.sectionLabel, { color: c.muted }]}>Reason for cancelling</Text>
+                <TextInput
+                  style={[styles.input, styles.commentInput, { backgroundColor: c.inputBg, color: c.text }]}
+                  value={agentCancelReason}
+                  onChangeText={setAgentCancelReason}
+                  placeholder="Why can't you complete this delivery?"
+                  placeholderTextColor={c.muted}
+                  multiline
+                />
+                <Pressable
+                  onPress={handleAgentCancelOrder}
+                  disabled={cancellingOrder}
+                  style={({ pressed }) => [styles.primaryButton, { backgroundColor: RED }, (pressed || cancellingOrder) && { opacity: 0.7 }]}
+                >
+                  <Text style={styles.primaryButtonText}>{cancellingOrder ? 'Cancelling…' : 'Confirm Cancellation'}</Text>
+                </Pressable>
+              </>
+            ) : (
+              <Pressable
+                onPress={handleAgentCancelPress}
+                style={({ pressed }) => [styles.secondaryButton, { borderColor: RED }, pressed && { opacity: 0.6 }]}
+              >
+                <Text style={[styles.secondaryButtonText, { color: RED }]}>Cancel this delivery</Text>
+              </Pressable>
+            )}
           </View>
         )}
 
@@ -1105,6 +1218,7 @@ export default function OrderTrackingScreen() {
           </View>
         )}
       </ScrollView>
+      </KeyboardAvoidingView>
     </SafeAreaView>
   );
 }
