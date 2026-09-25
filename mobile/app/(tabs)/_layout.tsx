@@ -41,8 +41,7 @@ export default function TabLayout() {
       <Tabs.Screen
         name="my-orders"
         options={{
-          title: 'My Orders',
-          href: mode === 'customer' ? undefined : null,
+          title: mode === 'driver' ? 'Deliveries' : 'My Orders',
           tabBarIcon: ({ color }) => <IconSymbol size={28} name="shippingbox.fill" color={color} />,
         }}
       />

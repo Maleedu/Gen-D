@@ -27,6 +27,8 @@ type MyOrder = {
   pricing_mode: PricingMode;
   price_paise: number | null;
   created_at: string;
+  cancelledByMeAt?: string;
+  cancelReason?: string;
 };
 
 type BidderProfile = {
@@ -63,6 +65,9 @@ const STATUS_META: Record<Exclude<OrderStatus, 'open'>, { label: string; color: 
 };
 
 function statusMetaFor(order: MyOrder, mode: ViewMode): { label: string; color: string } {
+  if (order.cancelledByMeAt) {
+    return { label: 'You backed out', color: NEUTRAL };
+  }
   if (order.status === 'open') {
     return { label: order.pricing_mode === 'auction' ? 'Bids open' : 'Waiting for an agent', color: AMBER };
   }
@@ -127,12 +132,46 @@ export default function MyOrdersScreen() {
       setOrders([]);
       return;
     }
-    const rows = (data ?? []) as unknown as MyOrder[];
+    let rows = (data ?? []) as unknown as MyOrder[];
+
+    // Driver mode only: orders this agent backed out of via agent_cancel_order
+    // no longer carry accepted_agent_id (see 49_agent_cancel_order.sql), so
+    // they wouldn't otherwise match the filter above — surface them anyway,
+    // sourced from the agent_cancellations record instead of the live order.
+    if (mode === 'driver') {
+      const { data: cancellations } = await supabase
+        .from('agent_cancellations')
+        .select('order_id, created_at, reason')
+        .eq('agent_id', user.id);
+      if (cancellations && cancellations.length > 0) {
+        const { data: cancelledOrders } = await supabase
+          .from('orders')
+          .select('id, item_description, status, pricing_mode, price_paise, created_at')
+          .in('id', cancellations.map((c) => c.order_id));
+        const liveOrderIds = new Set(rows.map((r) => r.id));
+        const cancelledRows: MyOrder[] = (cancelledOrders ?? [])
+          .filter((o) => !liveOrderIds.has(o.id))
+          .map((o) => {
+            const cancellation = cancellations.find((c) => c.order_id === o.id)!;
+            return {
+              ...(o as unknown as MyOrder),
+              cancelledByMeAt: cancellation.created_at,
+              cancelReason: cancellation.reason,
+            };
+          });
+        rows = [...rows, ...cancelledRows].sort(
+          (a, b) => new Date(b.cancelledByMeAt ?? b.created_at).getTime() - new Date(a.cancelledByMeAt ?? a.created_at).getTime(),
+        );
+      }
+    }
     setOrders(rows);
 
     // Bid counts only matter for orders still open to bidding — bounded
-    // query rather than one per card.
-    const openAuctionIds = rows.filter((o) => o.status === 'open' && o.pricing_mode === 'auction').map((o) => o.id);
+    // query rather than one per card. Excludes cancelled-by-me rows: that
+    // auction activity belongs to whichever agent holds the order now.
+    const openAuctionIds = rows
+      .filter((o) => o.status === 'open' && o.pricing_mode === 'auction' && !o.cancelledByMeAt)
+      .map((o) => o.id);
     if (openAuctionIds.length > 0) {
       const { data: bidRows } = await supabase.from('bids').select('order_id').in('order_id', openAuctionIds);
       const counts: Record<string, number> = {};
@@ -202,7 +241,11 @@ export default function MyOrdersScreen() {
   }, [reviewingOrderId, loadBids]);
 
   function handleOrderPress(order: MyOrder) {
-    if (order.status === 'open' && order.pricing_mode === 'auction') {
+    if (order.cancelledByMeAt) {
+      Alert.alert('You backed out of this delivery', order.cancelReason || 'No reason given.');
+      return;
+    }
+    if (mode === 'customer' && order.status === 'open' && order.pricing_mode === 'auction') {
       setReviewingOrderId(order.id);
       return;
     }
@@ -367,7 +410,7 @@ function OrderRow({
   order, bidCount, onPress, c, mode,
 }: { order: MyOrder; bidCount: number | undefined; onPress: () => void; c: Palette; mode: ViewMode }) {
   const meta = statusMetaFor(order, mode);
-  const isOpenBidding = order.status === 'open' && order.pricing_mode === 'auction';
+  const isOpenBidding = order.status === 'open' && order.pricing_mode === 'auction' && !order.cancelledByMeAt;
   const rightText = isOpenBidding
     ? `${bidCount ?? 0} bid${(bidCount ?? 0) === 1 ? '' : 's'}`
     : formatRupees(order.price_paise);

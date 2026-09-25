@@ -755,6 +755,13 @@ export default function OrderTrackingScreen() {
         // Silently ignored — see comment above.
       }
     })();
+
+    // The agent has no more relationship to this order once cancelled —
+    // send them back to the Wall rather than leaving them on a screen that
+    // no longer has a role-appropriate view for them.
+    Alert.alert('Delivery cancelled', 'This order has been reopened for another agent.', [
+      { text: 'OK', onPress: () => router.replace('/wall') },
+    ]);
   }
 
   function handleAgentCancelPress() {

@@ -7,7 +7,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Image } from 'expo-image';
 import * as Location from 'expo-location';
-import { router } from 'expo-router';
+import { router, useFocusEffect } from 'expo-router';
 import {
   useFonts,
   SpaceGrotesk_700Bold,
@@ -295,10 +295,18 @@ export default function WallScreen() {
       setOrders([]);
       return;
     }
-    const rows = (data ?? []) as unknown as Order[];
+    let rows = (data ?? []) as unknown as Order[];
+    if (agentId) {
+      const { data: cancellations } = await supabase
+        .from('agent_cancellations')
+        .select('order_id')
+        .eq('agent_id', agentId);
+      const cancelledOrderIds = new Set((cancellations ?? []).map((c) => c.order_id));
+      rows = rows.filter((o) => !cancelledOrderIds.has(o.id));
+    }
     setOrders(withDistance(rows, coordsRef.current));
     fetchHighestBids(rows.filter((o) => o.pricing_mode === 'auction').map((o) => o.id));
-  }, [fetchHighestBids]);
+  }, [fetchHighestBids, agentId]);
 
   // Own bids only — RLS ("bids: agent manages own bid") wouldn't return
   // anyone else's anyway, but this is also all the card needs to know.
@@ -372,6 +380,14 @@ export default function WallScreen() {
     }
     startLoading();
   }, [verified, fetchOrders, fetchMyBids]);
+
+  useFocusEffect(
+    useCallback(() => {
+      if (verified === null) return; // still waiting on the initial profile fetch, avoid a duplicate racing call
+      fetchOrders();
+      fetchMyBids();
+    }, [verified, fetchOrders, fetchMyBids])
+  );
 
   async function handleAccept(order: OrderWithDistance) {
     if (!agentId) return;
