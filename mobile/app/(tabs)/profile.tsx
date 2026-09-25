@@ -30,6 +30,16 @@ type Palette = {
   card: string; border: string; inputBg: string;
 };
 
+type VehicleKind = 'bike' | 'auto' | 'car' | 'bus' | 'other';
+
+const VEHICLE_OPTIONS: { key: VehicleKind; label: string }[] = [
+  { key: 'bike', label: '🏍️ Bike' },
+  { key: 'auto', label: '🛺 Auto' },
+  { key: 'car', label: '🚗 Car' },
+  { key: 'bus', label: '🚌 Bus' },
+  { key: 'other', label: '📦 Other' },
+];
+
 // Customer-facing profile — separate from the agent-facing Progress screen
 // (mobile/app/(tabs)/explore.tsx), which stays completely unchanged. This
 // shows only identity/contact info and logout, no gamification stats.
@@ -56,6 +66,10 @@ export default function CustomerProfileScreen() {
   const [uploadingAvatar, setUploadingAvatar] = useState(false);
   const [upiInput, setUpiInput] = useState('');
   const [savingUpi, setSavingUpi] = useState(false);
+  const [vehicleType, setVehicleType] = useState<VehicleKind | null>(null);
+  const [regInput, setRegInput] = useState('');
+  const [vehicleId, setVehicleId] = useState<string | null>(null);
+  const [savingVehicle, setSavingVehicle] = useState(false);
   const referralCode = userId ? userId.replace(/-/g, '').slice(0, 8).toUpperCase() : '';
 
   async function handleShareReferralCode() {
@@ -97,6 +111,21 @@ export default function CustomerProfileScreen() {
       .eq('profile_id', user.id)
       .maybeSingle();
     setUpiInput(paymentInfo?.upi_id ?? '');
+
+    const { data: vehicle } = await supabase
+      .from('agent_vehicles')
+      .select('id, vehicle_type, registration_number')
+      .eq('profile_id', user.id)
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (vehicle) {
+      setVehicleId(vehicle.id);
+      if (VEHICLE_OPTIONS.some((opt) => opt.key === vehicle.vehicle_type)) {
+        setVehicleType(vehicle.vehicle_type as VehicleKind);
+      }
+      setRegInput(vehicle.registration_number ?? '');
+    }
   }, []);
 
   useEffect(() => {
@@ -144,6 +173,45 @@ export default function CustomerProfileScreen() {
       return;
     }
     setUpiInput(trimmed);
+  }
+
+  async function handleSaveVehicle() {
+    if (!userId) return;
+    if (!vehicleType) {
+      Alert.alert('Pick a vehicle type', 'Choose the vehicle you drive.');
+      return;
+    }
+    const reg = regInput.toUpperCase().replace(/[^A-Z0-9]/g, '');
+    if (reg.length < 6 || reg.length > 12) {
+      Alert.alert('Check registration number', 'Enter your vehicle registration number, for example TS04AB1234.');
+      return;
+    }
+    setSavingVehicle(true);
+    if (vehicleId) {
+      const { error } = await supabase
+        .from('agent_vehicles')
+        .update({ vehicle_type: vehicleType, registration_number: reg })
+        .eq('id', vehicleId);
+      setSavingVehicle(false);
+      if (error) {
+        Alert.alert("Couldn't save vehicle", error.message);
+        return;
+      }
+    } else {
+      const { data, error } = await supabase
+        .from('agent_vehicles')
+        .insert({ profile_id: userId, vehicle_type: vehicleType, registration_number: reg })
+        .select('id')
+        .single();
+      setSavingVehicle(false);
+      if (error) {
+        Alert.alert("Couldn't save vehicle", error.message);
+        return;
+      }
+      setVehicleId(data.id);
+    }
+    setRegInput(reg);
+    Alert.alert('Saved', 'Your vehicle details were saved.');
   }
 
   async function handlePickAvatar() {
@@ -293,6 +361,47 @@ export default function CustomerProfileScreen() {
 
         {mode === 'driver' && (
           <View style={[styles.card, { backgroundColor: c.card, borderColor: c.border }]}>
+            <Text style={[styles.sectionLabel, { color: c.muted }]}>My vehicle</Text>
+            <View style={styles.chipRow}>
+              {VEHICLE_OPTIONS.map((opt) => (
+                <Pressable
+                  key={opt.key}
+                  onPress={() => setVehicleType(opt.key)}
+                  style={[
+                    styles.chip,
+                    vehicleType === opt.key
+                      ? { backgroundColor: accent }
+                      : { backgroundColor: 'transparent', borderWidth: 1.5, borderColor: c.border },
+                  ]}
+                >
+                  <Text style={[styles.chipText, { color: vehicleType === opt.key ? c.bg : c.text }]}>{opt.label}</Text>
+                </Pressable>
+              ))}
+            </View>
+            <Text style={[styles.inputLabel, { color: c.muted }]}>Registration number</Text>
+            <TextInput
+              style={[styles.input, { backgroundColor: c.inputBg, color: c.text }]}
+              value={regInput}
+              onChangeText={setRegInput}
+              placeholder="TS04AB1234"
+              placeholderTextColor={c.muted}
+              autoCapitalize="characters"
+              autoCorrect={false}
+              maxLength={14}
+            />
+            <Pressable
+              onPress={handleSaveVehicle}
+              disabled={savingVehicle}
+              style={({ pressed }) => [styles.primaryButton, { backgroundColor: 'transparent', borderWidth: 1.5, borderColor: accent, marginTop: 10 }, (pressed || savingVehicle) && { opacity: 0.7 }]}
+            >
+              <Text style={[styles.primaryButtonText, { color: accent }]}>{savingVehicle ? 'Saving…' : 'Save'}</Text>
+            </Pressable>
+            <Text style={[styles.contactLine, { color: c.muted }]}>Customers see this when you accept their ride.</Text>
+          </View>
+        )}
+
+        {mode === 'driver' && (
+          <View style={[styles.card, { backgroundColor: c.card, borderColor: c.border }]}>
             <Text style={[styles.sectionLabel, { color: c.muted }]}>Payment details</Text>
             <Text style={[styles.inputLabel, { color: c.muted }]}>UPI ID</Text>
             <TextInput
@@ -390,4 +499,8 @@ const styles = StyleSheet.create({
 
   secondaryButton: { borderRadius: 12, borderWidth: 1.5, paddingVertical: 13, alignItems: 'center' },
   secondaryButtonText: { fontSize: 14, fontWeight: '700' },
+
+  chipRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+  chip: { borderRadius: 20, paddingVertical: 8, paddingHorizontal: 14 },
+  chipText: { fontSize: 13, fontWeight: '700' },
 });

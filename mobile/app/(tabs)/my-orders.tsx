@@ -1,10 +1,10 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   View, Text, Pressable, StyleSheet, useColorScheme, Alert,
   FlatList, RefreshControl, ActivityIndicator,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { router } from 'expo-router';
+import { router, useFocusEffect } from 'expo-router';
 import { supabase } from '../../lib/supabase';
 import { AgentAvatar } from '../../components/agent-avatar';
 import { useViewMode, type ViewMode } from '../../lib/view-mode';
@@ -24,6 +24,7 @@ type MyOrder = {
   id: string;
   item_description: string;
   status: OrderStatus;
+  order_type: 'parcel' | 'ride';
   pricing_mode: PricingMode;
   price_paise: number | null;
   created_at: string;
@@ -74,6 +75,9 @@ function statusMetaFor(order: MyOrder, mode: ViewMode): { label: string; color: 
   if (order.status === 'accepted' && mode === 'driver') {
     return { label: 'Heading to pickup', color: STATUS_META.accepted.color };
   }
+  if (order.status === 'delivered' && order.order_type === 'ride') {
+    return { label: 'Completed', color: GREEN };
+  }
   return STATUS_META[order.status];
 }
 
@@ -110,6 +114,11 @@ export default function MyOrdersScreen() {
   const [submittingBidId, setSubmittingBidId] = useState<string | null>(null);
   const bidSelectionBanner = useExplainerBanner(EXPLAINER_BANNER_KEYS.bidSelection);
 
+  // Debounces the realtime-triggered reload below — several row events can
+  // land in a tight burst (e.g. a status flip plus a follow-up column
+  // update), and this collapses them into a single loadOrders() call.
+  const refreshTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   const loadOrders = useCallback(async () => {
     setLoadError(null);
     const { data: { user } } = await supabase.auth.getUser();
@@ -124,7 +133,7 @@ export default function MyOrdersScreen() {
     const filterColumn = mode === 'driver' ? 'accepted_agent_id' : 'customer_id';
     const { data, error } = await supabase
       .from('orders')
-      .select('id, item_description, status, pricing_mode, price_paise, created_at')
+      .select('id, item_description, status, order_type, pricing_mode, price_paise, created_at')
       .eq(filterColumn, user.id)
       .order('created_at', { ascending: false });
     if (error) {
@@ -146,7 +155,7 @@ export default function MyOrdersScreen() {
       if (cancellations && cancellations.length > 0) {
         const { data: cancelledOrders } = await supabase
           .from('orders')
-          .select('id, item_description, status, pricing_mode, price_paise, created_at')
+          .select('id, item_description, status, order_type, pricing_mode, price_paise, created_at')
           .in('id', cancellations.map((c) => c.order_id));
         const liveOrderIds = new Set(rows.map((r) => r.id));
         const cancelledRows: MyOrder[] = (cancelledOrders ?? [])
@@ -192,6 +201,44 @@ export default function MyOrdersScreen() {
       ignore = true;
     };
   }, [loadOrders]);
+
+  // Keeps this list live: a status change made from the other party's
+  // device (or the agent-cancellation flow) reloads this screen without
+  // waiting for a manual pull-to-refresh.
+  useEffect(() => {
+    let cancelled = false;
+    let channel: ReturnType<typeof supabase.channel> | null = null;
+    (async () => {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user || cancelled) return;
+      const filter = mode === 'driver' ? `accepted_agent_id=eq.${user.id}` : `customer_id=eq.${user.id}`;
+      channel = supabase
+        .channel(`my-orders-${mode}-${user.id}`)
+        .on(
+          'postgres_changes',
+          { event: '*', schema: 'public', table: 'orders', filter },
+          () => {
+            if (refreshTimeoutRef.current) clearTimeout(refreshTimeoutRef.current);
+            refreshTimeoutRef.current = setTimeout(() => {
+              loadOrders();
+            }, 300);
+          },
+        )
+        .subscribe();
+    })();
+    return () => {
+      cancelled = true;
+      if (refreshTimeoutRef.current) clearTimeout(refreshTimeoutRef.current);
+      if (channel) supabase.removeChannel(channel);
+    };
+  }, [mode, loadOrders]);
+
+  // Silent refresh (no loading flag) whenever this screen regains focus —
+  // e.g. coming back from an order's tracking screen after its status
+  // changed.
+  useFocusEffect(useCallback(() => {
+    loadOrders();
+  }, [loadOrders]));
 
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
