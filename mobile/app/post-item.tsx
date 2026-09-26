@@ -11,7 +11,9 @@ import { File } from 'expo-file-system';
 import { ImageManipulator, SaveFormat } from 'expo-image-manipulator';
 import { router, useLocalSearchParams } from 'expo-router';
 import { supabase } from '../lib/supabase';
-import { geocodeAddressOrThrow, getCurrentLocationOrThrow, LocationPermissionDeniedError } from '../lib/location';
+import {
+  geocodeAddressOrThrow, geocodeDropoffNearOrThrow, getCurrentLocationOrThrow, haversineKm, LocationPermissionDeniedError,
+} from '../lib/location';
 import { EXPLAINER_BANNER_KEYS, useExplainerBanner } from '../lib/explainer-banners';
 import { ExplainerBanner } from '../components/explainer-banner';
 
@@ -283,12 +285,32 @@ export default function PostItemScreen() {
 
     setSubmitting(true);
     try {
-      const [pointA, pointB] = await Promise.all([
-        pointACoords
-          ? Promise.resolve(pointACoords)
-          : geocodeAddressOrThrow('pickup (Point A)', pointAAddress.trim()),
-        geocodeAddressOrThrow('dropoff (Point B)', pointBAddress.trim()),
-      ]);
+      const pointA = pointACoords
+        ? pointACoords
+        : await geocodeAddressOrThrow('pickup (Point A)', pointAAddress.trim());
+      const pointB = await geocodeDropoffNearOrThrow(
+        'dropoff (Point B)',
+        pointBAddress.trim(),
+        { lat: pointA.lat, lng: pointA.lng },
+      );
+
+      const km = haversineKm(pointA.lat, pointA.lng, pointB.lat, pointB.lng);
+      if (km > 60) {
+        const confirmed = await new Promise<boolean>((resolve) => {
+          Alert.alert(
+            'Check your drop-off',
+            `"${pointBAddress.trim()}" is about ${Math.round(km)} km from your pickup. Is that right?`,
+            [
+              { text: 'Change address', style: 'cancel', onPress: () => resolve(false) },
+              { text: 'Continue anyway', onPress: () => resolve(true) },
+            ],
+            { cancelable: true, onDismiss: () => resolve(false) },
+          );
+        });
+        if (!confirmed) {
+          return;
+        }
+      }
 
       let photoUrls: string[] = [];
       if (!isRide && photoUri) {

@@ -1,5 +1,17 @@
 import * as Location from 'expo-location';
 
+// Standard haversine — Earth radius 6371 km.
+export function haversineKm(lat1: number, lng1: number, lat2: number, lng2: number): number {
+  const R = 6371;
+  const dLat = ((lat2 - lat1) * Math.PI) / 180;
+  const dLng = ((lng2 - lng1) * Math.PI) / 180;
+  const a =
+    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos((lat1 * Math.PI) / 180) * Math.cos((lat2 * Math.PI) / 180) * Math.sin(dLng / 2) * Math.sin(dLng / 2);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  return R * c;
+}
+
 // formattedAddress is Android-only (per expo-location's own type comment) —
 // build a readable line from the individual components so iOS gets the same
 // quality of display string instead of falling straight back to raw digits.
@@ -33,6 +45,71 @@ export async function geocodeAddressOrThrow(
     throw new Error(`"${address}" for ${label} matched more than one place. Add more detail (area, city, pincode) to narrow it down.`);
   }
   return { lat: results[0].latitude, lng: results[0].longitude };
+}
+
+// A short, unqualified drop-off (e.g. "Mamatha hospital") can have an exact
+// namesake in a completely different city, which geocodeAsync happily
+// returns as a single unambiguous match — nothing for geocodeAddressOrThrow
+// to reject. This tries the address qualified with the pickup's own
+// city/state first (via reverse-geocoding `near`), and only accepts that
+// qualified match when it resolves to exactly one place; anything else
+// (already qualified/mentions the town itself, no local hint available, 0
+// results, or the qualified lookup itself fails) falls back to the plain
+// geocodeAddressOrThrow behaviour unchanged.
+export async function geocodeDropoffNearOrThrow(
+  label: string,
+  address: string,
+  near: { lat: number; lng: number },
+): Promise<{ lat: number; lng: number }> {
+  const text = address.trim();
+
+  let hint = '';
+  let town: string | null = null;
+  try {
+    const [result] = await Location.reverseGeocodeAsync({ latitude: near.lat, longitude: near.lng });
+    if (result) {
+      town = result.city ?? result.subregion ?? result.district ?? null;
+      const state = result.region ?? null;
+      hint = [town, state].filter(Boolean).join(', ');
+    }
+  } catch {
+    hint = '';
+  }
+
+  if (hint && !text.includes(',') && (town == null || !text.toLowerCase().includes(town.toLowerCase()))) {
+    let nearResults: Location.LocationGeocodedLocation[] | null = null;
+    try {
+      nearResults = await Location.geocodeAsync(`${text}, ${hint}`);
+    } catch {
+      nearResults = null;
+    }
+    if (nearResults && nearResults.length === 1) {
+      // Town-centre guard: a typo'd or unrecognized drop-off can make the
+      // qualified lookup collapse onto the town's own generic centre point
+      // (the same coordinates as geocoding the hint alone) instead of a
+      // real match — compare against the plain hint and reject a match
+      // within 250 m of it.
+      let hintResults: Location.LocationGeocodedLocation[] | null = null;
+      try {
+        hintResults = await Location.geocodeAsync(hint);
+      } catch {
+        hintResults = null;
+      }
+      const isTownCentreFallback =
+        hintResults != null &&
+        hintResults.length > 0 &&
+        haversineKm(nearResults[0].latitude, nearResults[0].longitude, hintResults[0].latitude, hintResults[0].longitude) < 0.25;
+      if (!isTownCentreFallback) {
+        return { lat: nearResults[0].latitude, lng: nearResults[0].longitude };
+      }
+    }
+    if (nearResults && nearResults.length > 1) {
+      throw new Error(`"${text}" for ${label} matched more than one place. Add more detail (area, city, pincode) to narrow it down.`);
+    }
+    // nearResults is null (call failed) or length 0 — fall through below.
+  }
+
+  return await geocodeAddressOrThrow(label, text);
 }
 
 // Thrown by getCurrentLocationOrThrow specifically on a denied/undetermined
