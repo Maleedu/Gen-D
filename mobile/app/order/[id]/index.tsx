@@ -1081,6 +1081,7 @@ export default function OrderTrackingScreen() {
       return;
     }
     setMyRating({ stars: ratingStars, comment: ratingComment.trim() || null });
+    Alert.alert('Thanks for rating', 'Your rating has been saved.');
   }
 
   function handleContactAgent() {
@@ -1625,6 +1626,7 @@ export default function OrderTrackingScreen() {
             ) : (
               <>
                 <StarPicker value={ratingStars} onChange={setRatingStars} c={c} />
+                <Text style={[styles.note, { color: c.muted, marginTop: -4, marginBottom: 8 }]}>{ratingStars > 0 ? `${ratingStars} of 5` : 'Tap a star to rate'}</Text>
                 <TextInput
                   style={[styles.input, styles.commentInput, { backgroundColor: c.inputBg, color: c.text }]}
                   value={ratingComment}
@@ -1705,8 +1707,8 @@ function StarPicker({ value, onChange, c }: { value: number; onChange: (n: numbe
   return (
     <View style={styles.starRow}>
       {[1, 2, 3, 4, 5].map((n) => (
-        <Pressable key={n} onPress={() => onChange(n)} hitSlop={8}>
-          <Text style={[styles.starChar, { color: n <= value ? AMBER : c.border }]}>★</Text>
+        <Pressable key={n} onPress={() => onChange(n)} hitSlop={12}>
+          <Text style={[styles.starChar, { color: n <= value ? AMBER : c.muted }]}>★</Text>
         </Pressable>
       ))}
     </View>
@@ -1876,7 +1878,7 @@ const styles = StyleSheet.create({
   complaintText: { fontSize: 13, fontWeight: '600', lineHeight: 18 },
 
   starRow: { flexDirection: 'row', gap: 6, marginBottom: 12 },
-  starChar: { fontSize: 30 },
+  starChar: { fontSize: 34 },
   starDisplay: { fontSize: 24, marginVertical: 2 },
   commentInput: {
     textAlign: 'left', letterSpacing: 0, fontSize: 14, minHeight: 70, textAlignVertical: 'top',
