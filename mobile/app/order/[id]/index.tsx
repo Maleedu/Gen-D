@@ -1378,56 +1378,67 @@ export default function OrderTrackingScreen() {
         )}
 
         {order.status === 'picked_up' && role === 'customer' && !isRide && (
-          <View style={[styles.card, { backgroundColor: c.card, borderColor: c.border }]}>
-            <MapsButton label="Open dropoff location in Maps" onPress={() => handleOpenMaps(order.point_b_lat, order.point_b_lng)} />
-            <View style={[styles.divider, { backgroundColor: c.border }]} />
-            <Text style={[styles.sectionLabel, { color: c.muted }]}>Seal check</Text>
-            {photoExists === null ? (
-              <ActivityIndicator color={BLUE} style={{ marginTop: 8 }} />
-            ) : photoExists ? (
-              <>
-                <Text style={[styles.note, { color: c.muted, marginBottom: 10 }]}>
-                  Your agent has submitted a delivery photo. Check it, then confirm whether the seal arrived
-                  intact.
+          <>
+            <AgentCard
+              agent={agentProfile}
+              c={c}
+              onContact={handleContactAgent}
+              resolvedAmountPaise={resolvedAmountPaise}
+              showPayment={photoExists === true}
+              chatUnread={chatUnread}
+              onOpenChat={openChat}
+            />
+            <View style={[styles.card, { backgroundColor: c.card, borderColor: c.border }]}>
+              <MapsButton label="Open dropoff location in Maps" onPress={() => handleOpenMaps(order.point_b_lat, order.point_b_lng)} />
+              <View style={[styles.divider, { backgroundColor: c.border }]} />
+              <Text style={[styles.sectionLabel, { color: c.muted }]}>Seal check</Text>
+              {photoExists === null ? (
+                <ActivityIndicator color={BLUE} style={{ marginTop: 8 }} />
+              ) : photoExists ? (
+                <>
+                  <Text style={[styles.note, { color: c.muted, marginBottom: 10 }]}>
+                    Your agent has submitted a delivery photo. Check it, then confirm whether the seal arrived
+                    intact.
+                  </Text>
+                  {deliveryPhotoUrl ? (
+                    <Image
+                      source={{ uri: deliveryPhotoUrl }}
+                      style={styles.deliveryPhoto}
+                      resizeMode="cover"
+                    />
+                  ) : loadingDeliveryPhoto ? (
+                    <ActivityIndicator color={BLUE} style={{ marginBottom: 12 }} />
+                  ) : null}
+                  <View style={styles.sealRow}>
+                    <Pressable
+                      onPress={() => handleSealCheck('intact')}
+                      disabled={!!sealSubmitting}
+                      style={({ pressed }) => [
+                        styles.primaryButton, styles.sealButton, { backgroundColor: GREEN },
+                        (pressed || sealSubmitting) && { opacity: 0.7 },
+                      ]}
+                    >
+                      <Text style={styles.primaryButtonText}>{sealSubmitting === 'intact' ? 'Confirming…' : 'Seal intact'}</Text>
+                    </Pressable>
+                    <Pressable
+                      onPress={() => handleSealCheck('broken')}
+                      disabled={!!sealSubmitting}
+                      style={({ pressed }) => [
+                        styles.primaryButton, styles.sealButton, { backgroundColor: RED },
+                        (pressed || sealSubmitting) && { opacity: 0.7 },
+                      ]}
+                    >
+                      <Text style={styles.primaryButtonText}>{sealSubmitting === 'broken' ? 'Reporting…' : 'Seal broken'}</Text>
+                    </Pressable>
+                  </View>
+                </>
+              ) : (
+                <Text style={[styles.note, { color: c.muted }]}>
+                  Waiting for your agent to submit a delivery photo before you can confirm the seal.
                 </Text>
-                {deliveryPhotoUrl ? (
-                  <Image
-                    source={{ uri: deliveryPhotoUrl }}
-                    style={styles.deliveryPhoto}
-                    resizeMode="cover"
-                  />
-                ) : loadingDeliveryPhoto ? (
-                  <ActivityIndicator color={BLUE} style={{ marginBottom: 12 }} />
-                ) : null}
-                <View style={styles.sealRow}>
-                  <Pressable
-                    onPress={() => handleSealCheck('intact')}
-                    disabled={!!sealSubmitting}
-                    style={({ pressed }) => [
-                      styles.primaryButton, styles.sealButton, { backgroundColor: GREEN },
-                      (pressed || sealSubmitting) && { opacity: 0.7 },
-                    ]}
-                  >
-                    <Text style={styles.primaryButtonText}>{sealSubmitting === 'intact' ? 'Confirming…' : 'Seal intact'}</Text>
-                  </Pressable>
-                  <Pressable
-                    onPress={() => handleSealCheck('broken')}
-                    disabled={!!sealSubmitting}
-                    style={({ pressed }) => [
-                      styles.primaryButton, styles.sealButton, { backgroundColor: RED },
-                      (pressed || sealSubmitting) && { opacity: 0.7 },
-                    ]}
-                  >
-                    <Text style={styles.primaryButtonText}>{sealSubmitting === 'broken' ? 'Reporting…' : 'Seal broken'}</Text>
-                  </Pressable>
-                </View>
-              </>
-            ) : (
-              <Text style={[styles.note, { color: c.muted }]}>
-                Waiting for your agent to submit a delivery photo before you can confirm the seal.
-              </Text>
-            )}
-          </View>
+              )}
+            </View>
+          </>
         )}
 
         {order.status === 'picked_up' && role === 'customer' && isRide && (
