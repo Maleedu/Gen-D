@@ -66,7 +66,7 @@ export default function DriverLocationSharer() {
 
     let refreshTimeout: ReturnType<typeof setTimeout> | null = null;
     const channel = supabase
-      .channel(`driver-sharer-${userId}`)
+      .channel(`driver-sharer-${userId}-${Math.random().toString(36).slice(2, 8)}`)
       .on(
         'postgres_changes',
         { event: '*', schema: 'public', table: 'orders', filter: `accepted_agent_id=eq.${userId}` },

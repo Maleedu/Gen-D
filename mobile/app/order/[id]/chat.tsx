@@ -152,7 +152,7 @@ export default function ChatScreen() {
   useEffect(() => {
     if (!orderId) return;
     const channel = supabase
-      .channel(`order-messages-${orderId}`)
+      .channel(`order-messages-${orderId}-${Math.random().toString(36).slice(2, 8)}`)
       .on(
         'postgres_changes',
         { event: 'INSERT', schema: 'public', table: 'order_messages', filter: `order_id=eq.${orderId}` },

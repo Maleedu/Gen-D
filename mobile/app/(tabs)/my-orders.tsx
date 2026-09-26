@@ -213,7 +213,7 @@ export default function MyOrdersScreen() {
       if (!user || cancelled) return;
       const filter = mode === 'driver' ? `accepted_agent_id=eq.${user.id}` : `customer_id=eq.${user.id}`;
       channel = supabase
-        .channel(`my-orders-${mode}-${user.id}`)
+        .channel(`my-orders-${mode}-${user.id}-${Math.random().toString(36).slice(2, 8)}`)
         .on(
           'postgres_changes',
           { event: '*', schema: 'public', table: 'orders', filter },

@@ -545,7 +545,7 @@ export default function OrderTrackingScreen() {
   useEffect(() => {
     if (!orderId) return;
     const channel = supabase
-      .channel(`order-${orderId}`)
+      .channel(`order-${orderId}-${Math.random().toString(36).slice(2, 8)}`)
       .on(
         'postgres_changes',
         { event: 'UPDATE', schema: 'public', table: 'orders', filter: `id=eq.${orderId}` },
