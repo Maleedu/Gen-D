@@ -427,10 +427,9 @@ export default function PostItemScreen() {
         }
       })();
 
-      // My Orders, not the Wall — Wall is Driver-mode-only content now (see
-      // the customer-driver mode handover doc, section 8). My Orders
-      // re-queries by customer_id, so the new row's id isn't needed here.
-      router.replace('/my-orders');
+      // After posting, land on the order's own screen (it updates live from
+      // waiting to agent assigned); My Orders remains reachable from Profile.
+      router.replace({ pathname: '/order/[id]', params: { id: insertedOrder.id } });
     } catch (err) {
       Alert.alert('Could not post item', err instanceof Error ? err.message : String(err));
     } finally {

@@ -114,7 +114,9 @@ export default function DriverLocationSharer() {
             p_lng: pos.coords.longitude,
           });
           if (error) {
-            console.warn('update_driver_location failed', error.message);
+            if (!/not active|assigned agent/i.test(error.message)) {
+              console.warn('update_driver_location failed', error.message);
+            }
             if (userId) loadActiveOrderIds(userId);
           }
         }
