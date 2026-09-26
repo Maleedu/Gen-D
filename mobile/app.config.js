@@ -69,6 +69,7 @@ module.exports = {
       ],
       "expo-font",
       "expo-image",
+      "expo-notifications",
       "expo-status-bar",
       "expo-web-browser",
     ],
