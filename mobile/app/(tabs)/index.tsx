@@ -1,8 +1,9 @@
-import { View, Text, Pressable, StyleSheet, useColorScheme } from 'react-native';
+import { View, Text, Pressable, StyleSheet, useColorScheme, Alert } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import MaterialIcons from '@expo/vector-icons/MaterialIcons';
 import { router } from 'expo-router';
 import { useViewMode, type ViewMode } from '../../lib/view-mode';
+import { supabase } from '../../lib/supabase';
 import { CUSTOMER_COLOR, AGENT_COLOR } from '../../lib/colors';
 import { ArviBubble } from '../../components/arvi-bubble';
 import { GendLogo } from '../../components/gend-logo';
@@ -21,6 +22,34 @@ export default function HomeScreen() {
   const isDark = useColorScheme() === 'dark';
   const { mode, setMode } = useViewMode();
   const isDriver = mode === 'driver';
+
+  async function handleModePress(target: ViewMode) {
+    if (target === mode) return;
+    const targetLabel = target === 'driver' ? 'Agent' : 'Customer';
+    const currentLabel = target === 'driver' ? 'Customer' : 'Agent';
+    let message = `You're changing from ${currentLabel} mode to ${targetLabel} mode.`;
+    if (mode === 'driver') {
+      try {
+        const { data: { user } } = await supabase.auth.getUser();
+        if (user) {
+          const { count } = await supabase
+            .from('orders')
+            .select('id', { count: 'exact', head: true })
+            .eq('accepted_agent_id', user.id)
+            .in('status', ['accepted', 'picked_up']);
+          if (count && count > 0) {
+            message += "\n\nYou have an active delivery. Switching modes won't cancel it, and your location stays shared with the customer until it's completed.";
+          }
+        }
+      } catch {
+        // Best-effort check only — fall back to the plain message.
+      }
+    }
+    Alert.alert(`Switch to ${targetLabel} mode?`, message, [
+      { text: 'Cancel', style: 'cancel' },
+      { text: 'Switch', onPress: () => setMode(target) },
+    ]);
+  }
   const c = {
     bg: isDark ? '#000000' : '#ffffff',
     text: isDark ? '#ffffff' : '#0f1720',
@@ -40,7 +69,7 @@ export default function HomeScreen() {
         </Text>
       </View>
 
-      <ModeToggle mode={mode} onChange={setMode} c={c} />
+      <ModeToggle mode={mode} onChange={handleModePress} c={c} />
 
       {isDriver ? (
         <Pressable
