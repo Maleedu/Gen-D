@@ -289,7 +289,7 @@ export default function OrderTrackingScreen() {
   const loadAgentProfile = useCallback(async (agentId: string) => {
     const { data: profile, error } = await supabase
       .from('profiles')
-      .select('id, first_name, last_name, phone_number, avatar_url, avg_rating_as_agent, completed_deliveries_count')
+      .select('id, first_name, last_name, avatar_url, avg_rating_as_agent, completed_deliveries_count')
       .eq('id', agentId)
       .maybeSingle();
     if (error || !profile) return;
@@ -307,10 +307,16 @@ export default function OrderTrackingScreen() {
       .maybeSingle();
     setAgentProfile({
       ...profile,
+      phone_number: null,
       vehicle_type: (vehicle?.vehicle_type as VehicleType) ?? null,
       registration_number: vehicle?.registration_number ?? null,
       upi_id: payment?.upi_id ?? null,
     });
+    // Real number only comes back from get_order_contact_phone when this
+    // viewer and agentId share an order — merged in once it resolves, same
+    // as the gamification accent fields below.
+    const { data: phone } = await supabase.rpc('get_order_contact_phone', { p_target_profile_id: agentId });
+    setAgentProfile((prev) => (prev ? { ...prev, phone_number: (phone as string | null) ?? null } : prev));
     // Small accent only (level + streak) — the dedicated stats screen is
     // where the agent sees their own full gamification picture, including
     // badges. Fetched separately so a slow/failed call never blocks the
@@ -324,13 +330,9 @@ export default function OrderTrackingScreen() {
   }, []);
 
   const loadCustomerProfile = useCallback(async (customerId: string) => {
-    const { data, error } = await supabase
-      .from('profiles')
-      .select('phone_number')
-      .eq('id', customerId)
-      .maybeSingle();
-    if (error || !data) return;
-    setCustomerProfile(data);
+    const { data: phone, error } = await supabase.rpc('get_order_contact_phone', { p_target_profile_id: customerId });
+    if (error) return;
+    setCustomerProfile({ phone_number: (phone as string | null) ?? null });
   }, []);
 
   const checkPhotoExists = useCallback(async () => {

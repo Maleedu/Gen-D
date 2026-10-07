@@ -96,7 +96,7 @@ export default function CustomerProfileScreen() {
     setUserId(user.id);
     const { data, error } = await supabase
       .from('profiles')
-      .select('first_name, last_name, avatar_url, phone_number, is_agent_verified, wallet_balance_paise')
+      .select('first_name, last_name, avatar_url, is_agent_verified, wallet_balance_paise')
       .eq('id', user.id)
       .maybeSingle();
     if (error) {
@@ -104,6 +104,13 @@ export default function CustomerProfileScreen() {
       return;
     }
     setProfile(data as Profile);
+
+    // get_order_contact_phone (SECURITY DEFINER) only ever returns a real
+    // number for the caller's own id or a shared-order counterpart — for
+    // "my own profile" that's always satisfied, so this is just the real
+    // number whenever one is on file.
+    const { data: phone } = await supabase.rpc('get_order_contact_phone', { p_target_profile_id: user.id });
+    setProfile((prev) => (prev ? { ...prev, phone_number: (phone as string | null) ?? null } : prev));
 
     const { data: paymentInfo } = await supabase
       .from('agent_payment_info')
