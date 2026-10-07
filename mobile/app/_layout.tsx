@@ -9,6 +9,7 @@ import { supabase } from '@/lib/supabase';
 import { ViewModeProvider } from '@/lib/view-mode';
 import { registerForPushNotifications } from '@/lib/pushNotifications';
 import DriverLocationSharer from '@/components/driver-location-sharer';
+import AgentWallPresence from '@/components/agent-wall-presence';
 
 export const unstable_settings = {
   anchor: '(tabs)',
@@ -34,6 +35,7 @@ export default function RootLayout() {
         </Stack>
         <StatusBar style="auto" />
         <DriverLocationSharer />
+        <AgentWallPresence />
       </ThemeProvider>
     </ViewModeProvider>
   );
